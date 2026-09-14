@@ -1,0 +1,13 @@
+{
+  "name": "runtime-proof",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/server.test.mjs",
+    "validate": "node ../../packages/cli/dist/bin.js validate src/server.ts --json"
+  },
+  "devDependencies": {
+    "@noodleseed/one": "0.35.0"
+  }
+}

@@ -201,7 +201,11 @@ export interface ServiceOptions {
   readonly customerVerifierFirebaseJwks?: JSONWebKeySet;
   /** Development/test-only Firebase JWKS URI injection for child-process localhost E2E. */
   readonly customerVerifierFirebaseJwksUri?: string;
-  /** Extra request admission hook layered before built-in preview/anonymous limits. */
+  /**
+   * Extra policy for MCP requests, authenticated assistant session minting, and session-bound requests.
+   * Assistant requests are checked once before execution; apps retain MCP operation categories. Anonymous assistant
+   * session identifiers are not verified subjects. Built-in MCP/public embed counters remain separate.
+   */
   readonly admissionGate?: AdmissionGate;
   /**
    * Tenant-safe developer-facing app log store (M3, [ADR 0101](../../../docs/decisions/0101-tenant-safe-user-app-logs.md)).

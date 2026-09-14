@@ -412,6 +412,7 @@ export function createServiceHandler(
     if (
       dispatchAssistantRoutes(req, res, url, {
         registry,
+        ...(options.admissionGate === undefined ? {} : { admissionGate: options.admissionGate }),
         resolveRuntimeTarget,
         store: assistantStore,
         appearance: assistantAppearance,

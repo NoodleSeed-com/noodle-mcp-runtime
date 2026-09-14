@@ -61,6 +61,61 @@ non-secret image metadata accepted by the service; they are not generated operat
 and credentials are managed through typed `noodle variables` and `noodle secrets` operations, not added to this
 service environment.
 
+## Optional managed admission
+
+A separate policy service can admit or deny runtime requests without embedding its product policy in Core.
+Configure both values explicitly in the self-host process environment:
+
+| Value | Secret | Contract |
+| :--- | :---: | :--- |
+| `NOODLE_ADMISSION_URL` | No | Fixed HTTP endpoint using HTTPS, or explicit loopback HTTP (`localhost`, `127.0.0.1`, `[::1]`). No URL credentials or fragment. |
+| `NOODLE_ADMISSION_TOKEN` | Yes | A separately generated 32-byte secret in canonical base64url format, exactly 43 characters; repeated-byte placeholders are rejected. |
+
+Generate the callback secret with `node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"`
+and store it privately at both services. It is an outbound callback credential, not a runtime customer token or
+administrator credential. Neither value is generated or forwarded by the reference Compose initializer in this
+slice. Supply the pair through an explicit private Compose environment override or the process environment;
+editing the initializer's canonical file alone does not enable this adapter. Do not put the token into a checked-in
+Compose file. A sidecar sharing the runtime's network namespace can use a callback such as
+`http://127.0.0.1:9080/runtime/admit`; loopback always refers to the runtime's own network namespace.
+
+Managed admission also requires the complete **external issuer** authentication group above. Admission with
+absent owner authentication or Google federation fails startup validation. The external verifier checks the
+signature, issuer and exact requested resource audience, requires an integer expiry in the future with at most
+300 seconds of remaining validity, and always projects a customer identity. It does not import private Noodle
+roles, developer grants or service-principal bindings into that identity. This bounds remaining validity; it does
+not establish a maximum original token lifetime from `iat`. The separate policy service still owns current
+customer permission and entitlement decisions. The administrator gate does not establish customer identity.
+Unconfigured self-host and its existing external/Google authentication behavior remain unchanged.
+
+For each admission call, Core sends a bearer-authenticated JSON POST to the configured endpoint:
+
+```json
+{
+  "version": 1,
+  "context": {
+    "routeId": "example-route",
+    "method": "tools/call",
+    "category": "execute"
+  }
+}
+```
+
+`context` is the runtime's typed `AdmissionContext`; available subject, organization, app, environment,
+deployment and operation fields travel with it. The policy service must validate this input and resolve current
+authority. It must return a successful HTTP status with exactly `{ "allow": true }` or
+`{ "allow": false, "reason": "policy_reason", "status": 403 }`; a denial's status is optional and may only be
+`403` or `429`. Extra fields and other shapes are rejected. A denial reason must be a 1–64 character machine code matching
+`^[a-z][a-z0-9_]{0,63}$` across the entire string, with no whitespace or control characters. Unsupported reasons
+are replaced with `admission_unavailable`; do not encode diagnostics or secrets in policy identifiers.
+
+The adapter follows no redirects, permits at most 16 KiB of response bytes and applies a two-second deadline to
+the complete response, including its body. Network errors, non-success HTTP status, timeout, invalid UTF-8,
+malformed/oversized responses and unsupported decisions deny with HTTP `403` and reason
+`admission_unavailable`. The adapter does not log the callback body or credential and does not retry a request.
+A policy callback is an admission decision, not a durable reservation or financial ledger by itself; the policy
+service must supply any required concurrency, accounting and reconciliation guarantees.
+
 ## Apply and verify a change
 
 ```sh

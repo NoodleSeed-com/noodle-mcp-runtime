@@ -296,3 +296,109 @@ describe('resolveSelfHostConfig', () => {
     );
   });
 });
+
+describe('self-host HTTP admission configuration', () => {
+  function admissionEnvironment(): Record<string, string> {
+    return {
+      ...validEnvironment(),
+      NOODLE_OAUTH_ISSUER: 'http://127.0.0.1:9080',
+      NOODLE_OAUTH_JWKS_URI: 'http://127.0.0.1:9080/jwks',
+    };
+  }
+  const token = 'LQPPSnvpT4TMomooI4tXegZQJQFxeEJr2Sn9sYrZj9Y';
+
+  it('leaves admission unconfigured when the optional pair is absent', () => {
+    expect(resolveSelfHostConfig(admissionEnvironment()).admission).toBeUndefined();
+  });
+
+  it.each([
+    'https://policy.example.test/runtime/admit',
+    'http://127.0.0.1:9080/runtime/admit',
+    'http://[::1]:9080/runtime/admit',
+    'http://localhost:9080/runtime/admit',
+  ])('accepts a fixed HTTPS or explicit loopback endpoint %s', (url) => {
+    expect(
+      resolveSelfHostConfig({
+        ...admissionEnvironment(),
+        NOODLE_ADMISSION_URL: url,
+        NOODLE_ADMISSION_TOKEN: token,
+      }).admission,
+    ).toEqual({ url, token });
+  });
+
+  it.each([
+    [{ NOODLE_ADMISSION_URL: 'http://127.0.0.1:9080/admit' }, 'NOODLE_ADMISSION_TOKEN'],
+    [{ NOODLE_ADMISSION_TOKEN: token }, 'NOODLE_ADMISSION_URL'],
+  ])('rejects an incomplete admission pair', (partial, missingVariable) => {
+    expect(() => resolveSelfHostConfig({ ...admissionEnvironment(), ...partial })).toThrow(
+      missingVariable,
+    );
+  });
+
+  it.each([
+    'http://policy.example.test/admit',
+    'http://0.0.0.0:9080/admit',
+    'http://localhost.example.test:9080/admit',
+    'https://username:password@policy.example.test/admit',
+    'https://policy.example.test/admit#fragment',
+    'file:///tmp/admit',
+    'invalid-private-endpoint',
+  ])('rejects an unsafe admission URL without disclosing it', (url) => {
+    expectConfigurationError(
+      {
+        ...admissionEnvironment(),
+        NOODLE_ADMISSION_URL: url,
+        NOODLE_ADMISSION_TOKEN: token,
+      },
+      'NOODLE_ADMISSION_URL',
+      url,
+    );
+  });
+
+  it.each([
+    'short-private-token',
+    'a'.repeat(43),
+    Buffer.alloc(32, 7).toString('base64url'),
+    'example-admission-token-do-not-use',
+    `${token} `,
+    `${token.slice(0, 42)}Z`,
+    Buffer.alloc(31, 7).toString('base64url'),
+  ])('rejects invalid admission secrets without disclosing them', (invalidToken) => {
+    expectConfigurationError(
+      {
+        ...admissionEnvironment(),
+        NOODLE_ADMISSION_URL: 'http://127.0.0.1:9080/admit',
+        NOODLE_ADMISSION_TOKEN: invalidToken,
+      },
+      'NOODLE_ADMISSION_TOKEN',
+      invalidToken,
+    );
+  });
+});
+
+describe('managed admission identity requirement', () => {
+  const admission = {
+    NOODLE_ADMISSION_URL: 'http://127.0.0.1:9080/admit',
+    NOODLE_ADMISSION_TOKEN: ADMIN_TOKEN,
+  };
+
+  it('rejects admission without an external owner identity verifier', () => {
+    expect(() => resolveSelfHostConfig({ ...validEnvironment(), ...admission })).toThrow(
+      'external owner authentication',
+    );
+  });
+
+  it('rejects Google federation as the identity source for managed admission', () => {
+    expect(() =>
+      resolveSelfHostConfig({
+        ...validEnvironment(),
+        ...admission,
+        NOODLE_OAUTH_ISSUER: 'http://127.0.0.1:9080',
+        NOODLE_OAUTH_SIGNING_KEY_BASE64: Buffer.from('private-key-fixture').toString('base64'),
+        NOODLE_OAUTH_GOOGLE_CLIENT_ID: 'client',
+        NOODLE_OAUTH_GOOGLE_CLIENT_SECRET: 'secret',
+        NOODLE_OAUTH_GOOGLE_REDIRECT_URI: 'http://127.0.0.1:9080/callback',
+      }),
+    ).toThrow('external owner authentication');
+  });
+});

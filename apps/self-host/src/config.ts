@@ -9,6 +9,7 @@ export interface SelfHostConfig {
   readonly publicBaseUrl: string;
   readonly assetRoot: string;
   readonly assetIdentitySalt: string;
+  readonly admission?: { readonly url: string; readonly token: string };
   readonly ownerAuth?:
     | { readonly kind: 'external'; readonly issuer: string; readonly jwksUri: string }
     | {
@@ -28,6 +29,8 @@ const KNOWN_NOODLE_VARIABLES = new Set([
   'NOODLE_BUILD_VERSION',
   'NOODLE_BUILD_SHA',
   'NOODLE_BUILD_TIME',
+  'NOODLE_ADMISSION_URL',
+  'NOODLE_ADMISSION_TOKEN',
   'NOODLE_SECRET_MASTER_KEY',
   'NOODLE_SELF_HOST_ADMIN_TOKEN',
   'NOODLE_ASSET_ROOT',
@@ -80,6 +83,12 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
   validateAssetIdentitySalt(assetIdentitySalt);
 
   const ownerAuth = resolveOwnerAuth(env);
+  const admission = resolveAdmission(env);
+  if (admission !== undefined && ownerAuth?.kind !== 'external') {
+    throw configurationError(
+      'NOODLE_ADMISSION_URL requires external owner authentication with NOODLE_OAUTH_ISSUER and NOODLE_OAUTH_JWKS_URI',
+    );
+  }
   return {
     databaseUrl,
     secretMasterKey,
@@ -90,7 +99,33 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
     assetRoot,
     assetIdentitySalt,
     ...(ownerAuth === undefined ? {} : { ownerAuth }),
+    ...(admission === undefined ? {} : { admission }),
   };
+}
+
+function resolveAdmission(env: Environment): SelfHostConfig['admission'] {
+  const url = optional(env, 'NOODLE_ADMISSION_URL');
+  const token = optional(env, 'NOODLE_ADMISSION_TOKEN');
+  if (url === undefined && token === undefined) return undefined;
+
+  const admissionUrl = required(env, 'NOODLE_ADMISSION_URL');
+  const admissionToken = required(env, 'NOODLE_ADMISSION_TOKEN');
+  const parsed = parseOAuthHttpUrl(admissionUrl, 'NOODLE_ADMISSION_URL');
+  if (parsed.hash.length > 0) {
+    throw configurationError('NOODLE_ADMISSION_URL must not include a fragment');
+  }
+  const decoded = Buffer.from(admissionToken, 'base64url');
+  if (
+    !/^[A-Za-z0-9_-]{43}$/.test(admissionToken) ||
+    decoded.byteLength !== 32 ||
+    decoded.toString('base64url') !== admissionToken ||
+    new Set(decoded).size < 2
+  ) {
+    throw configurationError(
+      'NOODLE_ADMISSION_TOKEN must be a generated 32-byte canonical base64url secret',
+    );
+  }
+  return { url: admissionUrl, token: admissionToken };
 }
 
 function resolveOwnerAuth(env: Environment): SelfHostConfig['ownerAuth'] {

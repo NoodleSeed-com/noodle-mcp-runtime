@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AssistantSessionRecord } from '@noodle-borg/assistant-gateway/portable';
 import { bearerToken } from '@noodle-borg/transport-http';
+import { admitAssistantRequest } from '../assistant-admission.js';
 import { sendForbidden, sendUnauthorized } from '../http-util.js';
 import type { AssistantRouteDeps } from './assistant.js';
 
@@ -20,6 +21,7 @@ export async function authenticateSession(
   req: IncomingMessage,
   res: ServerResponse,
   deps: AssistantRouteDeps,
+  admission: 'session' | 'defer-to-app-operation' = 'session',
 ): Promise<AssistantSessionRecord | undefined> {
   const token = bearerToken(req.headers.authorization);
   if (token === null) {
@@ -36,6 +38,10 @@ export async function authenticateSession(
   if (req.headers.origin !== session.origin) {
     sendForbidden(res, 'origin is not allowed');
     return undefined;
+  }
+  if (admission === 'session') {
+    applyBrowserCors(req, res, session.origin);
+    if (!(await admitAssistantRequest(req, res, deps.admissionGate, session))) return undefined;
   }
   return session;
 }

@@ -36,7 +36,7 @@ import {
 } from '@noodle-borg/assistant-gateway/portable';
 import { canonicalizeAuthorizationClaimValues } from '@noodle-borg/auth';
 import type { DeployAuthGate } from '@noodle-borg/control-plane/portable';
-import { type RequestEventInput, tenantMcpUrl } from '@noodle-borg/module';
+import { type AdmissionGate, type RequestEventInput, tenantMcpUrl } from '@noodle-borg/module';
 import {
   assistantAppToolCallRecorder,
   assistantRefusedTurnUsageRequestEvent,
@@ -62,6 +62,7 @@ import {
   assistantSessionResponseSchema,
 } from '@noodle-borg/wire-contracts';
 import type { RuntimeTargetResolver } from '../application-runtime-target.js';
+import { admitAssistantRequest, assistantAppAdmissionOperation } from '../assistant-admission.js';
 import { sendForbidden, sendUnauthorized } from '../http-util.js';
 import type { ServerRegistry } from '../registry.js';
 import type { AuditSink } from '../store/audit.js';
@@ -89,6 +90,8 @@ const SESSION_ABSOLUTE_MS = 2 * 60 * 60 * 1000;
 
 export interface AssistantRouteDeps {
   readonly registry: ServerRegistry;
+  /** Optional external policy, separate from built-in MCP and public embed capacity counters. */
+  readonly admissionGate?: AdmissionGate;
   readonly resolveRuntimeTarget?: RuntimeTargetResolver;
   readonly store: AssistantStore;
   /**
@@ -265,6 +268,14 @@ export async function handleAssistantSession(
     // carry the tenant's MCP resource audience just like OAuth-path customer callers.
     audience: tenantMcpUrl(deps.serviceBase(req), client.tenant),
   };
+  if (
+    !(await admitAssistantRequest(req, res, deps.admissionGate, {
+      tenant: client.tenant,
+      deploymentId: target.deploymentId,
+      caller,
+    }))
+  )
+    return;
 
   // Mid-conversation sign-in (5.6b). Its decision, refusals, audit, and response live in
   // `assistant-elevation.ts`, which owns elevation; this is only the branch.
@@ -547,7 +558,7 @@ export async function handleAssistantAppRequest(
   res: ServerResponse,
   deps: AssistantRouteDeps,
 ): Promise<void> {
-  const session = await authenticateSession(req, res, deps);
+  const session = await authenticateSession(req, res, deps, 'defer-to-app-operation');
   if (!session) return;
   applyBrowserCors(req, res, session.origin);
   const body = await readJsonBody(req, deps.maxBody);
@@ -559,6 +570,8 @@ export async function handleAssistantAppRequest(
   ) {
     return sendJson(res, 400, { error: 'invalid MCP App request' });
   }
+  const operation = assistantAppAdmissionOperation(body.value.method, body.value.params);
+  if (!(await admitAssistantRequest(req, res, deps.admissionGate, session, operation))) return;
   const target = await sessionScopedTarget(deps.registry, session, deps.resolveRuntimeTarget, req);
   if (!target) return sendJson(res, 409, { error: 'assistant deployment is unavailable' });
   const method = body.value.method;

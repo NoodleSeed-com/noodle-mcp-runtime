@@ -6,6 +6,7 @@ import { createLogger, type Logger } from '@noodle-borg/transport-http';
 
 import { SelfHostAdminGate } from './admin-gate.js';
 import { resolveSelfHostConfig } from './config.js';
+import { createHttpAdmissionGate } from './http-admission.js';
 import { ownerAuthOptions } from './owner-auth.js';
 
 type SelfHostRunningService = Pick<RunningService, 'close'>;
@@ -58,7 +59,10 @@ export async function startSelfHostService(
       }),
     ],
     deployGate: new SelfHostAdminGate(config.adminToken),
-    ...(await ownerAuthOptions(config.ownerAuth)),
+    ...(config.admission === undefined
+      ? {}
+      : { admissionGate: createHttpAdmissionGate(config.admission) }),
+    ...(await ownerAuthOptions(config.ownerAuth, config.admission !== undefined)),
     logger: dependencies.logger,
   });
 

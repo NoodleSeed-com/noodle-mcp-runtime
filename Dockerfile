@@ -2,7 +2,8 @@
 
 # Build both runtime targets from the same checkout and dependency store. The manifest-only copy keeps
 # dependency downloads cached when only source changes.
-FROM node:24-slim AS build
+ARG NODE_IMAGE=node:24-slim
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable && pnpm fetch
@@ -17,7 +18,7 @@ RUN pnpm --config.inject-workspace-packages=false install --prefer-offline --fro
   && pnpm --config.inject-workspace-packages=true --filter "@noodle-borg/github-builder-tooling" deploy --prod /app/builder-tooling \
   && find /app/service-deploy /app/cli-deploy /app/builder-tooling -type d -name '.ignored_*' -prune -exec rm -rf '{}' +
 
-FROM node:24-slim AS service-runtime
+FROM ${NODE_IMAGE} AS service-runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/service-deploy ./
@@ -31,7 +32,7 @@ USER node
 EXPOSE 8787
 CMD ["node", "dist/main.js"]
 
-FROM node:24-slim AS cli-runtime
+FROM ${NODE_IMAGE} AS cli-runtime
 WORKDIR /app
 ENV NODE_ENV=production \
   NOODLE_BUILDER_VITE_ROOT=/app/builder-tooling

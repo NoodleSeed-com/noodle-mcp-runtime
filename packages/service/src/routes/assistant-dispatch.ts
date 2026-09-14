@@ -9,7 +9,7 @@ import type {
   PublicEmbedStore,
 } from '@noodle-borg/assistant-gateway/portable';
 import type { DeployAuthGate } from '@noodle-borg/control-plane/portable';
-import type { RequestEventInput } from '@noodle-borg/module';
+import type { AdmissionGate, RequestEventInput } from '@noodle-borg/module';
 import type { Logger, TlsPosture } from '@noodle-borg/transport-http';
 import type { RuntimeTargetResolver } from '../application-runtime-target.js';
 import type { ServerRegistry } from '../registry.js';
@@ -39,6 +39,7 @@ import { handleAssistantTranscript } from './assistant-transcript.js';
 
 export interface AssistantDispatchDeps {
   readonly registry: ServerRegistry;
+  readonly admissionGate?: AdmissionGate;
   readonly resolveRuntimeTarget?: RuntimeTargetResolver;
   readonly store: AssistantStore;
   readonly appearance?: AssistantAppearanceSettingsStore;

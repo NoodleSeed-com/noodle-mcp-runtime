@@ -1,5 +1,9 @@
 import { TextDecoder } from 'node:util';
-import { createJwtVerifier, createStaticSigningKeyProvider } from '@noodle-borg/auth';
+import {
+  createJwtVerifier,
+  createStaticSigningKeyProvider,
+  type TokenVerifier,
+} from '@noodle-borg/auth';
 import type { ServeServiceOptions } from '@noodle-borg/service';
 import { GoogleOAuthAuthenticator } from '@noodle-borg/service/oauth-google';
 
@@ -13,13 +17,19 @@ type OwnerAuthOptions = Pick<
 /** Map the validated self-host owner-auth group onto the portable service boundary. */
 export async function ownerAuthOptions(
   config: SelfHostConfig['ownerAuth'],
+  managedAdmission = false,
 ): Promise<OwnerAuthOptions> {
   if (config === undefined) return {};
 
   if (config.kind === 'external') {
+    const verify = createJwtVerifier({
+      issuer: config.issuer,
+      jwksUri: config.jwksUri,
+      ...(managedAdmission ? { trustNoodleRoles: false, trustNoodlePrivateClaims: false } : {}),
+    });
     return {
       authServerIssuer: config.issuer,
-      verifyOwnerToken: createJwtVerifier({ issuer: config.issuer, jwksUri: config.jwksUri }),
+      verifyOwnerToken: managedAdmission ? managedCustomerVerifier(verify) : verify,
     };
   }
 
@@ -42,6 +52,40 @@ export async function ownerAuthOptions(
   } catch {
     throw signingKeyError();
   }
+}
+
+function managedCustomerVerifier(verify: TokenVerifier): TokenVerifier {
+  return async (token, resource) => {
+    if (resource === undefined || resource.trim().length === 0) return null;
+    const verified = await verify(token, resource);
+    if (verified === null) return null;
+    const { caller } = verified;
+    const { expiresAt } = caller;
+    const now = Math.floor(Date.now() / 1_000);
+    if (
+      typeof expiresAt !== 'number' ||
+      !Number.isSafeInteger(expiresAt) ||
+      expiresAt <= now ||
+      expiresAt > now + 300
+    ) {
+      return null;
+    }
+    return {
+      caller: {
+        subject: caller.subject,
+        scopes: caller.scopes,
+        roles: [],
+        audience: resource,
+        expiresAt,
+        identityKind: 'customer',
+        ...(caller.email === undefined ? {} : { email: caller.email }),
+        ...(caller.name === undefined ? {} : { name: caller.name }),
+        ...(caller.locale === undefined ? {} : { locale: caller.locale }),
+        ...(caller.timeZone === undefined ? {} : { timeZone: caller.timeZone }),
+        ...(caller.authTime === undefined ? {} : { authTime: caller.authTime }),
+      },
+    };
+  };
 }
 
 function decodeSigningKey(value: string): string {
