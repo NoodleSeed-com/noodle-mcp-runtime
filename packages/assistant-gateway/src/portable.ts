@@ -4,6 +4,11 @@ export * from './app-tool-call.js';
 export * from './artifact-projection.js';
 export * from './assistant-appearance.js';
 export * from './assistant-appearance-store.js';
+export type {
+  EnsureAssistantClientInput,
+  EnsureAssistantClientResult,
+} from './assistant-client-ensure.js';
+
 export * from './assistant-configuration.js';
 export * from './assistant-context.js';
 export * from './assistant-customer-issuer.js';
@@ -13,8 +18,10 @@ export * from './assistant-execution-bound.js';
 export * from './assistant-guide.js';
 export * from './assistant-interaction-state.js';
 export * from './assistant-interactive.js';
+export * from './assistant-operations.js';
 export * from './assistant-presentation.js';
 export * from './assistant-sensitive-values.js';
+export * from './assistant-session-identity.js';
 export * from './assistant-store.js';
 export * from './assistant-transcript.js';
 export * from './assistant-transcript-events.js';
@@ -27,6 +34,7 @@ export * from './embed-operator-view.js';
 export * from './embed-script.js';
 export * from './embed-store.js';
 export * from './in-memory-assistant-appearance-store.js';
+export { InMemoryAssistantStore } from './in-memory-assistant-store.js';
 export * from './in-memory-continuity-store.js';
 export * from './in-memory-elevation-store.js';
 export * from './in-memory-embed-store.js';

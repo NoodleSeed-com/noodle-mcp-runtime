@@ -70,6 +70,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/transport-http
     devDependencies:
+      '@noodle-borg/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@types/node':
         specifier: ^24.13.1
         version: 24.13.1
@@ -1092,6 +1095,9 @@ importers:
 
   packages/wire-contracts:
     dependencies:
+      '@noodle-borg/module':
+        specifier: workspace:*
+        version: link:../module
       '@noodle-borg/app-package':
         specifier: workspace:*
         version: link:../app-package

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InMemoryAssistantStore } from '../src/assistant-store.js';
+import { InMemoryAssistantStore } from '../src/portable.js';
 
 describe('assistant conversation history window', () => {
   it('retains the latest forty messages so a beta conversation can use its full turn budget', async () => {

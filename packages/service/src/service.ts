@@ -100,6 +100,8 @@ export function createServiceHandler(
   registry: ServerRegistry,
   options: ServiceOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => void {
+  if (options.requireAssistantExecutionAdmission && !options.admissionGate)
+    throw new Error('Assistant execution admission requires a configured admission gate');
   if (resolveRecoveryMode(options.recoveryMode) === 'quarantined')
     return createRecoveryQuarantineHandler(options);
   const logger = options.logger ?? noopLogger;
@@ -415,6 +417,9 @@ export function createServiceHandler(
         ...(options.admissionGate === undefined ? {} : { admissionGate: options.admissionGate }),
         resolveRuntimeTarget,
         store: assistantStore,
+        ...(options.requireAssistantExecutionAdmission
+          ? { requireAssistantExecutionAdmission: true }
+          : {}),
         appearance: assistantAppearance,
         ...(options.publicEmbeds !== undefined ? { publicEmbeds: options.publicEmbeds } : {}),
         ...(options.elevations !== undefined ? { elevations: options.elevations } : {}),

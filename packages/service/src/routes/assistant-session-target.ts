@@ -47,10 +47,33 @@ export async function activeAssistantTarget(
     readonly resolveRuntimeTarget?: RuntimeTargetResolver;
   },
   tenant: TenantRef,
+  serverVersion?: string,
 ) {
-  const target = await deps.registry.getActiveByTenant(tenant);
+  const target =
+    serverVersion === undefined
+      ? await deps.registry.getActiveByTenant(tenant)
+      : await deps.registry.getActiveByTenantVersion(tenant, serverVersion);
   return target && (deps.resolveRuntimeTarget ?? resolveTargetOrigins)(target);
 }
 
 import type { IncomingMessage } from 'node:http';
 import { trustedPublicAdmission } from '@noodle-borg/admission-limits/portable';
+
+/** Receipt uses the selected deployment record, never the request's version hint. */
+export async function assistantSessionTargetReceipt(
+  registry: ServerRegistry,
+  tenant: TenantRef,
+  deploymentId: string,
+  legacyVersion: string,
+) {
+  const record = (await registry.listDeployments(tenant)).find(
+    (candidate) => candidate.deploymentId === deploymentId,
+  );
+  return record
+    ? {
+        ...tenant,
+        deploymentId: record.deploymentId,
+        serverVersion: record.serverVersion ?? legacyVersion,
+      }
+    : undefined;
+}

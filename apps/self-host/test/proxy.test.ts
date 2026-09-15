@@ -3,13 +3,10 @@ import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { InMemoryConnectorRegistry, StaticServiceBroker } from '@noodle-borg/runtime';
 import type { ServeServiceOptions } from '@noodle-borg/service';
 import { createMcpRouter, noopLogger, type ServedTarget } from '@noodle-borg/transport-http';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  InMemoryConnectorRegistry,
-  StaticServiceBroker,
-} from '../../../packages/runtime/src/index.js';
 import { resolveSelfHostConfig } from '../src/config.js';
 import { startSelfHostService } from '../src/main.js';
 

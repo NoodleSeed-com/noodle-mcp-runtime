@@ -58,8 +58,8 @@
       {
         "path": "packages/assistant-gateway",
         "role": "library",
-        "maxSourceLines": 10000,
-        "reason": "One session lifecycle and turn-dispatch authority; keep continuity inside its existing release boundary."
+        "maxSourceLines": 10022,
+        "reason": "One session lifecycle and turn-dispatch authority; keep continuity inside its existing release boundary. Requester-approved (2026-09-15): bounded durable assistant execution and separation of portable store contracts from the existing in-memory adapter."
       },
       {
         "path": "packages/cli",
@@ -82,13 +82,13 @@
       {
         "path": "packages/service",
         "role": "composition",
-        "maxSourceLines": 65000,
-        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards.",
+        "maxSourceLines": 65126,
+        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition.",
         "modules": [
           {
             "path": "src/routes",
-            "maxSourceLines": 14600,
-            "reason": "Public HTTP transport and portable operator API routes. Founder-approved MVP allowance under ADR 0233. Requester-approved deployment and version deletion API adapter allowance (2026-09-14)."
+            "maxSourceLines": 14835,
+            "reason": "Public HTTP transport and portable operator API routes. Founder-approved MVP allowance under ADR 0233. Requester-approved deployment and version deletion API adapter allowance (2026-09-14). Requester-approved (2026-09-15): authenticated preparation/status and once-only model execution HTTP routes."
           },
           {
             "path": "src/oauth",

@@ -82,9 +82,11 @@ describe('startSelfHostService', () => {
       'modules',
       'port',
       'publicBaseUrl',
+      'requireAssistantExecutionAdmission',
       'secretMasterKey',
       'warmAll',
     ]);
+    expect(receivedOptions?.requireAssistantExecutionAdmission).toBe(false);
     expect(receivedOptions?.databaseUrl === DATABASE_URL).toBe(true);
     expect(receivedOptions?.secretMasterKey === MASTER_KEY).toBe(true);
     expect(receivedOptions).toMatchObject({

@@ -25,6 +25,7 @@
   "dependencies": {
     "@noodle-borg/app-package": "workspace:*",
     "@noodle-borg/knowledge": "workspace:*",
+    "@noodle-borg/module": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

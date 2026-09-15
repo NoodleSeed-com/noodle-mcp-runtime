@@ -13,7 +13,13 @@ export async function resolveAssistantModelBinding(
   const declaration = target.served.artifact.server.assistant?.model;
   if (declaration === undefined) return undefined;
   if (declaration.kind === 'noodle-managed') {
-    return deps.managedModelResolver?.resolve({ tenant, deploymentId });
+    const binding = await deps.managedModelResolver?.resolve({ tenant, deploymentId });
+    return (
+      binding && {
+        ...binding,
+        ...(deps.requireAssistantExecutionAdmission ? { requireExecutionAdmission: true } : {}),
+      }
+    );
   }
   const scope = resolveConfigScope(tenant);
   const [variables, secrets] = await Promise.all([
@@ -24,6 +30,7 @@ export async function resolveAssistantModelBinding(
   if (!apiKey) return undefined;
   return {
     source: 'operator',
+    ...(deps.requireAssistantExecutionAdmission ? { requireExecutionAdmission: true } : {}),
     ...(declaration.transport === undefined ? {} : { transport: declaration.transport }),
     baseUrl: resolveManagedVariablesInString(declaration.baseUrl, variables).replace(/\/$/, ''),
     model: resolveManagedVariablesInString(declaration.model, variables),

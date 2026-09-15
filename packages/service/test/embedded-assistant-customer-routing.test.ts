@@ -66,6 +66,9 @@ describe('embedded assistant customer routing session boundary', () => {
       store,
       registry: {
         getActiveByTenant: () => Promise.resolve(target),
+        listDeployments: async () => [
+          { deploymentId: target.deploymentId, serverVersion: ARTIFACT.server.version },
+        ],
       },
       serviceBase: () => serviceBase,
       clock: () => NOW,

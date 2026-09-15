@@ -49,6 +49,8 @@ interface AssistantSessionExchangeBase {
 export type CreateAssistantSessionInput =
   | (AssistantSessionExchangeBase & {
       readonly signInTicket?: undefined;
+      /** Exact canonical active server version. Omit to use the tenant default. */
+      readonly serverVersion?: string;
       readonly context?: Readonly<Record<string, string | number | boolean | null>>;
       /** Backend-verified connector routes keyed by authored `customerEndpoint` name. */
       readonly routing?: {
@@ -65,6 +67,7 @@ export type CreateAssistantSessionInput =
        * interaction continuation, which never reaches browser code.
        */
       readonly signInTicket: string;
+      readonly serverVersion?: undefined;
       readonly context?: undefined;
       /** Backend-verified connector routes keyed by authored `customerEndpoint` name. */
       readonly routing?: {
@@ -78,11 +81,23 @@ export type CreateAssistantSessionInput =
       readonly resume?: boolean;
     });
 
+export interface AssistantSessionTarget {
+  readonly org: string;
+  readonly app: string;
+  readonly env: string;
+  readonly serverVersion: string;
+  readonly deploymentId: string;
+}
+
 export interface AssistantSession {
+  readonly sessionId?: string;
+  readonly target?: AssistantSessionTarget;
   readonly token: string;
   readonly expiresAt: string;
   readonly endpoints: {
     readonly turns: string;
+    readonly operations?: string;
+    readonly operationStatus?: string;
     readonly toolConfirmations: string;
     readonly interactions?: string;
     readonly apps?: string;
@@ -192,6 +207,7 @@ export async function createAssistantSession(
     },
     body: JSON.stringify({
       origin: input.origin,
+      ...(input.serverVersion === undefined ? {} : { serverVersion: input.serverVersion }),
       user: input.user,
       ...(input.signInTicket === undefined ? {} : { signInTicket: input.signInTicket }),
       ...(input.signInTicket !== undefined && input.resume !== undefined

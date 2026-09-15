@@ -10,6 +10,8 @@ const OWNERS = [
   'packages/assistant-gateway/src/postgres-assistant-appearance-store.ts',
   'packages/assistant-gateway/src/postgres-assistant-interactions.ts',
   'packages/assistant-gateway/src/postgres-assistant.ts',
+  'packages/assistant-gateway/src/postgres-assistant-client-ensure.ts',
+  'packages/assistant-gateway/src/postgres-assistant-operations.ts',
   'packages/assistant-gateway/src/postgres-continuity-store.ts',
   'packages/assistant-gateway/src/postgres-elevation-store.ts',
   'packages/assistant-gateway/src/postgres-embed-store.ts',
@@ -58,13 +60,13 @@ it('requires an explicit schema generation and compatibility decision when canon
       .update(readFileSync(new URL(file, root)))
       .update('\0');
   expect(POSTGRES_SCHEMA_CONTRACT).toEqual({
-    generation: 1,
+    generation: 3,
     epoch: 1,
     profile: 'self-host-external-owner-v1',
-    plan: 'core-schema-1',
+    plan: 'core-schema-3',
   });
   expect(
     hash.digest('hex'),
     'Review schema generation and compatibility epoch before updating this lock',
-  ).toBe('55057a177ede35e6f8de78f67bb7a5e44fb2ef67fdd516c027f5bc80c85da98d');
+  ).toBe('52cc43dfc1f4821a3a7ae4dfe28ccabe4cffd7b4969bd5314b478dbb3ce3929c');
 });

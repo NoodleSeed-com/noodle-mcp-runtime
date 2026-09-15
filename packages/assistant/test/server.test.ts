@@ -34,6 +34,31 @@ const jsonResponse = (body: unknown, status: number) =>
   });
 
 describe('createAssistantSession', () => {
+  it('serializes exact version selection and preserves the server-owned session receipt', async () => {
+    const body = {
+      ...SESSION_BODY,
+      sessionId: 'session_exact',
+      target: {
+        org: 'acme',
+        app: 'support',
+        env: 'test',
+        serverVersion: '1',
+        deploymentId: 'deployment-one',
+      },
+    };
+    const result = await createAssistantSession(
+      { ...BASE_INPUT, serverVersion: '1' },
+      {
+        fetch: async (_url, init) => {
+          expect(JSON.parse(String(init?.body)).serverVersion).toBe('1');
+          return jsonResponse(body, 201);
+        },
+      },
+    );
+    expect(result.sessionId).toBe('session_exact');
+    expect(result.target).toEqual(body.target);
+  });
+
   it('exchanges backend-verified identity without returning the client secret', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -322,11 +347,15 @@ describe('Embedded Assistant v1 wire contract fixture (ADR 0151)', () => {
       'endpoints',
       'expiresAt',
       'resume',
+      'sessionId',
+      'target',
       'token',
     ]);
     expect(Object.keys(goldenFixture.endpoints).sort()).toEqual([
       'apps',
       'interactions',
+      'operationStatus',
+      'operations',
       'sandbox',
       'suggestions',
       'toolConfirmations',
@@ -338,7 +367,7 @@ describe('Embedded Assistant v1 wire contract fixture (ADR 0151)', () => {
     expect(goldenFixture.endpoints.toolConfirmations).toMatch(/^https:\/\//);
     expect(goldenFixture.endpoints.interactions).toMatch(/^https:\/\//);
     expect(goldenFixture.endpoints.suggestions).toMatch(/^https:\/\//);
-    // The one optional top-level addition: the armed post-sign-in resume hint (issue #1177).
+    // Optional receipt and post-sign-in resume fields remain compatible with legacy services.
     expect(goldenFixture.resume).toEqual({ tool: 'my_orders' });
   });
 

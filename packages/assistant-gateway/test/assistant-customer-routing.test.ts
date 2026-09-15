@@ -5,7 +5,7 @@ import {
   parseAssistantCustomerRouting,
   withAssistantSessionExecutionAuthority,
 } from '../src/assistant-customer-routing.js';
-import { type AssistantSessionRecord, InMemoryAssistantStore } from '../src/assistant-store.js';
+import { type AssistantSessionRecord, InMemoryAssistantStore } from '../src/portable.js';
 
 const DECLARATIONS = {
   customer_api: { allowedHttpsHostSuffixes: ['noodleseed.dev'] },

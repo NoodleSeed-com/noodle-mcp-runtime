@@ -137,6 +137,8 @@ describe('embedded assistant service', () => {
     expect(session.token).toMatch(/^nss_/);
     expect(session.endpoints).toEqual({
       turns: `${base}/v1/assistant/turns`,
+      operations: `${base}/v1/assistant/operations`,
+      operationStatus: `${base}/v1/assistant/operations/status`,
       toolConfirmations: `${base}/v1/assistant/tool-confirmations`,
       interactions: `${base}/v1/assistant/interactions`,
       apps: `${base}/v1/assistant/apps`,

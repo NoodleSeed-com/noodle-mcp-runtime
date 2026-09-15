@@ -31,6 +31,7 @@ import {
   handleAssistantConfirmation,
   handleAssistantInteraction,
 } from './assistant-interactions.js';
+import { handleAssistantOperation } from './assistant-operations.js';
 import { handlePublicAssistantConfiguration } from './assistant-public-configuration.js';
 import { handlePublicAssistantSession } from './assistant-public-session.js';
 import { handleAssistantSandbox } from './assistant-sandbox.js';
@@ -40,6 +41,7 @@ import { handleAssistantTranscript } from './assistant-transcript.js';
 export interface AssistantDispatchDeps {
   readonly registry: ServerRegistry;
   readonly admissionGate?: AdmissionGate;
+  readonly requireAssistantExecutionAdmission?: boolean;
   readonly resolveRuntimeTarget?: RuntimeTargetResolver;
   readonly store: AssistantStore;
   readonly appearance?: AssistantAppearanceSettingsStore;
@@ -76,6 +78,8 @@ export function dispatchAssistantRoutes(
   if (
     (url.pathname === '/v1/assistant/public-sessions' ||
       url.pathname === '/v1/assistant/turns' ||
+      url.pathname === '/v1/assistant/operations' ||
+      url.pathname === '/v1/assistant/operations/status' ||
       url.pathname === '/v1/assistant/tool-confirmations' ||
       url.pathname === '/v1/assistant/interactions' ||
       url.pathname === '/v1/assistant/apps' ||
@@ -120,6 +124,14 @@ export function dispatchAssistantRoutes(
   if (url.pathname === '/v1/assistant/sessions' && req.method === 'POST') {
     return run(req, res, deps, () => handleAssistantSession(req, res, deps));
   }
+  if (
+    ['/v1/assistant/operations', '/v1/assistant/operations/status'].includes(url.pathname) &&
+    req.method === 'POST'
+  ) {
+    return run(req, res, deps, () =>
+      handleAssistantOperation(req, res, deps, url.pathname.endsWith('/status')),
+    );
+  }
   if (url.pathname === '/v1/assistant/turns' && req.method === 'POST') {
     return run(req, res, deps, () => handleAssistantTurn(req, res, deps));
   }
@@ -146,6 +158,10 @@ export function dispatchAssistantRoutes(
     return run(req, res, deps, () => handleAssistantAppearance(req, res, tenant, deps));
   }
   if (doctorMatch) {
+    if (deps.requireAssistantExecutionAdmission) {
+      deps.sendJson(res, 403, { error: 'assistant model probes are disabled' });
+      return true;
+    }
     const tenant = decodeTenant(doctorMatch);
     if (!tenant) {
       deps.sendJson(res, 400, { error: 'invalid tenant path' });

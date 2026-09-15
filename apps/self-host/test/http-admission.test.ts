@@ -283,3 +283,38 @@ describe('self-host HTTP admission', () => {
     expect(JSON.stringify({ logs, decision })).not.toContain('private-policy-debug');
   });
 });
+
+it('accepts only the strict generic allow-side execution policy', async () => {
+  const policy = {
+    version: 1,
+    policyId: 'bounded-v1',
+    maxModelRequests: 2,
+    maxInputTokens: 16384,
+    maxCompletionTokens: 1024,
+    maxTokensPerTurn: 2048,
+    maxRequestBytes: 131072,
+    maxToolCallsPerTurn: 1,
+    timeoutMs: 30000,
+    maxTurnMs: 90000,
+    reasoningEffort: 'none',
+  };
+  let decision: unknown = { allow: true, assistantExecution: policy };
+  const url = await endpoint((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(decision));
+  });
+  const { gate } = await configuredGate(url);
+  expect(await gate(CONTEXT)).toEqual(decision);
+  for (const change of [
+    { maxInputTokens: -1 },
+    { timeoutMs: 0 },
+    { maxModelRequests: 1.5 },
+    { reasoningEffort: 'high' },
+    { invented: true },
+  ]) {
+    decision = { allow: true, assistantExecution: { ...policy, ...change } };
+    expect(await gate(CONTEXT)).toEqual(UNAVAILABLE);
+  }
+  decision = { allow: true, assistantExecution: null };
+  expect(await gate(CONTEXT)).toEqual(UNAVAILABLE);
+});

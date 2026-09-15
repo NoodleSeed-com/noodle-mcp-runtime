@@ -3,6 +3,8 @@ import { readJsonBody, sendJson } from '@noodle-borg/transport-http';
 import { sendForbidden } from '../http-util.js';
 import type { TenantRef } from '../store.js';
 import type { AssistantRouteDeps } from './assistant.js';
+import { emitAssistantClientAudit } from './assistant-client-audit.js';
+import { handleAssistantClientEnsure } from './assistant-client-ensure.js';
 import { now } from './assistant-route-http.js';
 import { activeAssistantTarget } from './assistant-session-target.js';
 import { authorizeControlPlane } from './control-plane.js';
@@ -23,6 +25,9 @@ export async function handleAssistantClients(
       subject: identity.subject,
     });
     if (!member) return sendForbidden(res, 'forbidden');
+  }
+  if (action === 'item' && req.method === 'PUT' && id) {
+    return handleAssistantClientEnsure(req, res, tenant, id, deps, identity);
   }
   if (action === 'collection' && req.method === 'GET') {
     const clients = await deps.store.listClients(tenant);
@@ -49,18 +54,7 @@ export async function handleAssistantClients(
       allowedOrigins: assistant.allowedOrigins,
       now: now(deps),
     });
-    await deps.audit.emit({
-      eventType: 'assistant.client.created',
-      org: tenant.org,
-      app: tenant.app,
-      env: tenant.env,
-      deploymentId: target.deploymentId,
-      decision: 'allow',
-      status: 201,
-      ...(identity ? { actorSubject: identity.subject } : {}),
-      ...(identity?.email ? { actorEmail: identity.email } : {}),
-      details: { clientId: created.client.id, name: created.client.name },
-    });
+    await emitAssistantClientAudit(deps.audit, tenant, identity, 'created', created.client);
     return sendJson(res, 201, {
       ok: true,
       ...publicClient(created.client),
@@ -73,18 +67,7 @@ export async function handleAssistantClients(
   if (action === 'rotate' && req.method === 'POST') {
     const rotated = await deps.store.rotateClient(id, now(deps));
     if (!rotated) return sendJson(res, 404, { error: 'not found' });
-    await deps.audit.emit({
-      eventType: 'assistant.client.rotated',
-      org: tenant.org,
-      app: tenant.app,
-      env: tenant.env,
-      deploymentId: rotated.client.deploymentId,
-      decision: 'allow',
-      status: 200,
-      ...(identity ? { actorSubject: identity.subject } : {}),
-      ...(identity?.email ? { actorEmail: identity.email } : {}),
-      details: { clientId: rotated.client.id },
-    });
+    await emitAssistantClientAudit(deps.audit, tenant, identity, 'rotated', rotated.client);
     return sendJson(res, 200, {
       ok: true,
       ...publicClient(rotated.client),
@@ -93,17 +76,7 @@ export async function handleAssistantClients(
   }
   if (action === 'item' && req.method === 'DELETE') {
     await deps.store.revokeClient(id, now(deps));
-    await deps.audit.emit({
-      eventType: 'assistant.client.revoked',
-      org: tenant.org,
-      app: tenant.app,
-      env: tenant.env,
-      decision: 'allow',
-      status: 204,
-      ...(identity ? { actorSubject: identity.subject } : {}),
-      ...(identity?.email ? { actorEmail: identity.email } : {}),
-      details: { clientId: id },
-    });
+    await emitAssistantClientAudit(deps.audit, tenant, identity, 'revoked', { id });
     res.statusCode = 204;
     res.end();
     return;

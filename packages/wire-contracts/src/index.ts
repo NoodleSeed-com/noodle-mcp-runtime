@@ -16,6 +16,7 @@ export * from './app-purge-reconciliation.js';
 export * from './application-channels.js';
 export * from './application-settings.js';
 export * from './assistant.js';
+export * from './assistant-session-input.js';
 export * from './billing-operations.js';
 export * from './billing-org-transfer.js';
 export * from './billing-read.js';
@@ -275,10 +276,10 @@ export function formatWireError(error: z.ZodError): string {
 export * from './application-activity.js';
 export * from './application-connections.js';
 export * from './application-onboarding.js';
+export * from './assistant-operations.js';
 export * from './billing-catalog.js';
 export * from './deployment-deletion.js';
 export * from './operation-coordination.js';
-
 export {
   MIXED_CUSTOMER_AUTH_FEATURE_VERSION,
   type ServiceInfoClientResponse,

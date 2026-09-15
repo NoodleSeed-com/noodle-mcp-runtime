@@ -25,6 +25,7 @@
     "@noodle-borg/transport-http": "workspace:*"
   },
   "devDependencies": {
+    "@noodle-borg/runtime": "workspace:*",
     "@types/node": "^24.13.1"
   }
 }

@@ -68,31 +68,36 @@ export async function readResponsesCompletion(
   let pending = '';
   let bytes = 0;
   let completed: ResponsesResult | undefined;
-  while (true) {
-    const { done, value } = await reader.read();
-    bytes += value?.byteLength ?? 0;
-    if (bytes > maxBytes) throw new Error('model response too large');
-    pending += decoder.decode(value, { stream: !done });
-    pending = pending.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    const frames = pending.split('\n\n');
-    pending = done ? '' : (frames.pop() ?? '');
-    for (const frame of frames) {
-      const data = frame
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).replace(/^ /, ''))
-        .join('\n');
-      if (!data || data === '[DONE]') continue;
-      const event = parseRecord(JSON.parse(data));
-      if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
-        onContent(event.delta);
-      } else if (event.type === 'response.completed') {
-        completed = parseResult(event.response);
-      } else if (event.type === 'error' || event.type === 'response.failed') {
-        throw new Error('responses stream returned an error');
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      bytes += value?.byteLength ?? 0;
+      if (bytes > maxBytes) throw new Error('model response too large');
+      pending += decoder.decode(value, { stream: !done });
+      pending = pending.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      const frames = pending.split('\n\n');
+      pending = done ? '' : (frames.pop() ?? '');
+      for (const frame of frames) {
+        const data = frame
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).replace(/^ /, ''))
+          .join('\n');
+        if (!data || data === '[DONE]') continue;
+        const event = parseRecord(JSON.parse(data));
+        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+          onContent(event.delta);
+        } else if (event.type === 'response.completed') {
+          completed = parseResult(event.response);
+        } else if (event.type === 'error' || event.type === 'response.failed') {
+          throw new Error('responses stream returned an error');
+        }
       }
+      if (done) break;
     }
-    if (done) break;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
   if (completed === undefined) throw new Error('responses stream did not complete');
   return completionFromResult(completed);

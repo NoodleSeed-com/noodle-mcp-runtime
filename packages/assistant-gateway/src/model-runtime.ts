@@ -3,6 +3,7 @@
 export * from './assistant-model-context.js';
 export * from './assistant-suggestions.js';
 export * from './model-error.js';
+export { permitAssistantModelExecution } from './model-execution.js';
 export * from './model-probe.js';
 export * from './model-request.js';
 export * from './model-stream.js';

@@ -4,7 +4,7 @@ import {
   ASSISTANT_INTERACTION_OUTCOME_RETENTION_MS,
   AssistantInteractionCapacityError,
   InMemoryAssistantStore,
-} from '../src/assistant-store.js';
+} from '../src/portable.js';
 
 const invocationContext = {
   temporal: {

@@ -91,6 +91,7 @@ export async function startSelfHostService(
     warmAll: config.schemaMode !== 'external',
     ...(config.schemaMode === 'external' ? { schemaMode: 'external' as const } : {}),
     mcpProtocolMode: 'dual',
+    requireAssistantExecutionAdmission: config.requireAssistantExecutionAdmission,
     ...assetOptions,
     deployGate: new SelfHostAdminGate(config.adminToken),
     ...(config.admission === undefined

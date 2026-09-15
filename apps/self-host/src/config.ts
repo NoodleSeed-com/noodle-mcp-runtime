@@ -2,6 +2,7 @@ import { isAbsolute, normalize, parse } from 'node:path';
 
 export interface SelfHostConfig {
   readonly databaseUrl: string;
+  readonly requireAssistantExecutionAdmission: boolean;
   readonly secretMasterKey: string;
   readonly adminToken: string;
   readonly host: string;
@@ -45,6 +46,7 @@ const KNOWN_NOODLE_VARIABLES = new Set([
   'NOODLE_ADMISSION_GOOGLE_AUDIENCE',
   'NOODLE_ADMISSION_TIMEOUT_MS',
   'NOODLE_ADMISSION_URL',
+  'NOODLE_ASSISTANT_EXECUTION_ADMISSION',
   'NOODLE_ADMISSION_TOKEN',
   'NOODLE_SECRET_MASTER_KEY',
   'NOODLE_SELF_HOST_ADMIN_TOKEN',
@@ -119,6 +121,14 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
 
   const ownerAuth = resolveOwnerAuth(env);
   const admission = resolveAdmission(env);
+  const executionSetting = env.NOODLE_ASSISTANT_EXECUTION_ADMISSION;
+  if (executionSetting !== undefined && executionSetting !== 'true' && executionSetting !== 'false')
+    throw configurationError('NOODLE_ASSISTANT_EXECUTION_ADMISSION must be true or false');
+  const requireAssistantExecutionAdmission = executionSetting === 'true';
+  if (requireAssistantExecutionAdmission && admission === undefined)
+    throw configurationError(
+      'NOODLE_ASSISTANT_EXECUTION_ADMISSION requires a configured admission gate',
+    );
   if (schemaMode === 'external' && ownerAuth?.kind === 'google')
     throw configurationError('external schema mode does not support integrated OAuth');
   if (admission !== undefined && ownerAuth?.kind !== 'external') {
@@ -128,6 +138,7 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
   }
   return {
     databaseUrl,
+    requireAssistantExecutionAdmission,
     secretMasterKey,
     adminToken,
     host,

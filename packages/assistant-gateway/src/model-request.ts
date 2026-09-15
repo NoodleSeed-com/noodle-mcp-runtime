@@ -7,6 +7,12 @@ import {
   modelRequestError,
   modelResponseError,
 } from './model-error.js';
+import {
+  assistantExecutionRequest,
+  countAssistantExecutionInput,
+  finishAssistantExecutionRequest,
+  withinAssistantDeadline,
+} from './model-execution.js';
 import { readResponsesCompletion, responsesInput, responsesTools } from './model-responses.js';
 import { type ModelCompletion, type ModelToolCall, readModelCompletion } from './model-stream.js';
 
@@ -30,6 +36,7 @@ export interface AssistantModelRequestPolicy {
 }
 
 interface ResolvedAssistantModelBase {
+  readonly requireExecutionAdmission?: boolean;
   readonly source: AssistantModelSource;
   readonly transport?: AssistantModelTransport;
   readonly baseUrl: string;
@@ -119,7 +126,13 @@ export async function requestModelCompletion(input: {
   if (url.protocol !== 'https:' || url.username || url.password) {
     throw modelRequestError('unsafe model endpoint');
   }
-  const completionLimit = input.maxCompletionTokens ?? binding.requestPolicy?.maxCompletionTokens;
+  const execution = assistantExecutionRequest(binding, input.maxCompletionTokens);
+  const completionLimit =
+    execution?.completionLimit ??
+    Math.min(
+      input.maxCompletionTokens ?? Infinity,
+      binding.requestPolicy?.maxCompletionTokens ?? Infinity,
+    );
   const body = JSON.stringify(
     transport === 'responses'
       ? {
@@ -127,11 +140,12 @@ export async function requestModelCompletion(input: {
           model: binding.model,
           stream: true,
           store: false,
+          ...(execution ? { reasoning: { effort: 'none' } } : {}),
           input: responsesInput(input.messages),
           tools: responsesTools(input.tools),
           ...(input.jsonOutput ? { text: { format: { type: 'json_object' } } } : {}),
           ...(input.toolChoice === undefined ? {} : { tool_choice: input.toolChoice }),
-          ...(completionLimit === undefined ? {} : { max_output_tokens: completionLimit }),
+          ...(!Number.isFinite(completionLimit) ? {} : { max_output_tokens: completionLimit }),
         }
       : {
           ...binding.requestPolicy?.extraBody,
@@ -141,7 +155,7 @@ export async function requestModelCompletion(input: {
           tools: input.tools,
           ...(input.jsonOutput ? { response_format: { type: 'json_object' } } : {}),
           ...(input.toolChoice === undefined ? {} : { tool_choice: input.toolChoice }),
-          ...(completionLimit === undefined ? {} : { max_completion_tokens: completionLimit }),
+          ...(!Number.isFinite(completionLimit) ? {} : { max_completion_tokens: completionLimit }),
         },
   );
   const requestBytes = new TextEncoder().encode(body).byteLength;
@@ -149,35 +163,61 @@ export async function requestModelCompletion(input: {
   if (maxRequestBytes !== undefined && requestBytes > maxRequestBytes) {
     throw modelRequestError('model request too large');
   }
-  await admitSponsorship(binding);
-  const bearerToken = binding.apiKey ?? (await binding.bearerToken());
-  if (!/^[^\s]{1,8192}$/.test(bearerToken)) {
-    throw modelRequestError('invalid model bearer token');
-  }
-  const timeoutSignal = AbortSignal.timeout(binding.requestPolicy?.timeoutMs ?? 30_000);
-  let response: Response;
+  const timeoutSignal =
+    execution?.signal ?? AbortSignal.timeout(binding.requestPolicy?.timeoutMs ?? 30_000);
+  const signal =
+    input.signal === undefined ? timeoutSignal : AbortSignal.any([input.signal, timeoutSignal]);
   try {
-    response = await input.fetcher(url.href, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bearerToken}`, 'content-type': 'application/json' },
-      body,
-      redirect: 'manual',
-      signal:
-        input.signal === undefined ? timeoutSignal : AbortSignal.any([input.signal, timeoutSignal]),
-    });
-  } catch (error) {
-    throw modelFetchError(error);
-  }
-  if (!response.ok) throw modelHttpError(response.status);
-  try {
-    return await (transport === 'responses' ? readResponsesCompletion : readModelCompletion)(
-      response,
-      input.onContent ?? (() => undefined),
-      input.maxResponseBytes,
+    signal.throwIfAborted();
+    return await withinAssistantDeadline(
+      (async () => {
+        await admitSponsorship(binding);
+        signal.throwIfAborted();
+        const bearerToken = binding.apiKey ?? (await binding.bearerToken());
+        if (!/^[^\s]{1,8192}$/.test(bearerToken))
+          throw modelRequestError('invalid model bearer token');
+        signal.throwIfAborted();
+        const headers = {
+          Authorization: `Bearer ${bearerToken}`,
+          'content-type': 'application/json',
+        };
+        await countAssistantExecutionInput(binding, body, input.fetcher, headers, signal);
+        signal.throwIfAborted();
+        let response: Response;
+        try {
+          response = await input.fetcher(url.href, {
+            method: 'POST',
+            headers,
+            body,
+            redirect: 'manual',
+            signal,
+          });
+        } catch (error) {
+          throw modelFetchError(error);
+        }
+        if (!response.ok) throw modelHttpError(response.status);
+        try {
+          const completion = await (transport === 'responses'
+            ? readResponsesCompletion
+            : readModelCompletion)(
+            response,
+            (delta) => {
+              if (!signal.aborted) input.onContent?.(delta);
+            },
+            Math.min(input.maxResponseBytes ?? 1 << 20, 1 << 20),
+          );
+          finishAssistantExecutionRequest(binding, completion);
+          return completion;
+        } catch (error) {
+          if (error instanceof AssistantModelError) throw error;
+          throw modelResponseError(error);
+        }
+      })(),
+      signal,
     );
   } catch (error) {
-    if (error instanceof AssistantModelError) throw error;
-    throw modelResponseError(error);
+    finishAssistantExecutionRequest(binding);
+    throw error;
   }
 }
 

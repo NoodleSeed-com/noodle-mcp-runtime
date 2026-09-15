@@ -8,7 +8,9 @@
     "apps": "https://cloud.noodleseed.dev/v1/assistant/apps",
     "sandbox": "https://cloud.noodleseed.dev/v1/assistant/sandbox",
     "transcript": "https://cloud.noodleseed.dev/v1/assistant/transcript",
-    "suggestions": "https://cloud.noodleseed.dev/v1/assistant/suggestions"
+    "suggestions": "https://cloud.noodleseed.dev/v1/assistant/suggestions",
+    "operations": "https://cloud.noodleseed.dev/v1/assistant/operations",
+    "operationStatus": "https://cloud.noodleseed.dev/v1/assistant/operations/status"
   },
   "configuration": {
     "branding": {
@@ -25,5 +27,13 @@
   },
   "resume": {
     "tool": "my_orders"
+  },
+  "sessionId": "session_2f9c1f6e-8a6b-4d5c-9e1f-3a7b5d8c0e2f",
+  "target": {
+    "org": "acme",
+    "app": "support",
+    "env": "test",
+    "serverVersion": "1",
+    "deploymentId": "deployment-example-one"
   }
 }

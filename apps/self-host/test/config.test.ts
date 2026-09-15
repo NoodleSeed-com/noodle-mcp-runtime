@@ -465,3 +465,23 @@ describe('managed instance configuration', () => {
     ).toThrow('NOODLE_ADMISSION_GOOGLE_AUDIENCE');
   });
 });
+
+it('requires external admission for the explicit default-off model execution mode', () => {
+  expect(resolveSelfHostConfig(validEnvironment()).requireAssistantExecutionAdmission).toBe(false);
+  expect(() =>
+    resolveSelfHostConfig({ ...validEnvironment(), NOODLE_ASSISTANT_EXECUTION_ADMISSION: 'true' }),
+  ).toThrow(/admission/i);
+  expect(() =>
+    resolveSelfHostConfig({ ...validEnvironment(), NOODLE_ASSISTANT_EXECUTION_ADMISSION: 'yes' }),
+  ).toThrow(/true or false/);
+  expect(
+    resolveSelfHostConfig({
+      ...validEnvironment(),
+      NOODLE_ASSISTANT_EXECUTION_ADMISSION: 'true',
+      NOODLE_OAUTH_ISSUER: 'https://issuer.example',
+      NOODLE_OAUTH_JWKS_URI: 'https://issuer.example/jwks',
+      NOODLE_ADMISSION_URL: 'https://policy.example/admit',
+      NOODLE_ADMISSION_TOKEN: ADMIN_TOKEN,
+    }).requireAssistantExecutionAdmission,
+  ).toBe(true);
+});

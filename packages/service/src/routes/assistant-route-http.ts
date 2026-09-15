@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AssistantSessionRecord } from '@noodle-borg/assistant-gateway/portable';
-import { bearerToken } from '@noodle-borg/transport-http';
+import { bearerToken, sendJson } from '@noodle-borg/transport-http';
 import { admitAssistantRequest } from '../assistant-admission.js';
 import { sendForbidden, sendUnauthorized } from '../http-util.js';
 import type { AssistantRouteDeps } from './assistant.js';
@@ -39,6 +39,18 @@ export async function authenticateSession(
     sendForbidden(res, 'origin is not allowed');
     return undefined;
   }
+  if (
+    deps.requireAssistantExecutionAdmission &&
+    [
+      '/v1/assistant/suggestions',
+      '/v1/assistant/interactions',
+      '/v1/assistant/tool-confirmations',
+    ].includes(new URL(req.url ?? '/', 'http://assistant.invalid').pathname)
+  ) {
+    applyBrowserCors(req, res, session.origin);
+    sendJson(res, 403, { error: 'assistant action requires an execution operation' });
+    return undefined;
+  }
   if (admission === 'session') {
     applyBrowserCors(req, res, session.origin);
     if (!(await admitAssistantRequest(req, res, deps.admissionGate, session))) return undefined;
@@ -71,6 +83,8 @@ export function now(deps: AssistantRouteDeps): Date {
 export function assistantSessionEndpoints(base: string) {
   return {
     turns: `${base}/v1/assistant/turns`,
+    operations: `${base}/v1/assistant/operations`,
+    operationStatus: `${base}/v1/assistant/operations/status`,
     toolConfirmations: `${base}/v1/assistant/tool-confirmations`,
     interactions: `${base}/v1/assistant/interactions`,
     apps: `${base}/v1/assistant/apps`,

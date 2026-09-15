@@ -187,6 +187,7 @@ exports[`service export surface lock > exports exactly this set of names 1`] = `
   "normalizeActivationServiceUrl",
   "normalizeBillingMigrationServiceUrl",
   "observedMetricValue",
+  "parseAssistantExecutionPolicy",
   "parseBillingEnforcementActivateRequest",
   "parseBillingEnforcementCohortSealRequest",
   "parseBillingEnforcementRollbackRequest",
@@ -228,4 +229,4 @@ exports[`service export surface lock > exports exactly this set of names 1`] = `
 ]
 `;
 
-exports[`service export surface lock > reports the surface size so a bulk loss is visible in the diff 1`] = `223`;
+exports[`service export surface lock > reports the surface size so a bulk loss is visible in the diff 1`] = `224`;

@@ -207,6 +207,7 @@ export interface ServiceOptions {
    * session identifiers are not verified subjects. Built-in MCP/public embed counters remain separate.
    */
   readonly admissionGate?: AdmissionGate;
+  readonly requireAssistantExecutionAdmission?: boolean;
   /**
    * Tenant-safe developer-facing app log store (M3, [ADR 0101](../../../docs/decisions/0101-tenant-safe-user-app-logs.md)).
    * Backs `GET /v1/orgs/{org}/apps/{app}/envs/{env}/logs` and `noodle logs`. Records are tenant-scoped and

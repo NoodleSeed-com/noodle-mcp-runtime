@@ -1,4 +1,4 @@
-import type { ServeServiceOptions } from '@noodle-borg/service';
+import { parseAssistantExecutionPolicy, type ServeServiceOptions } from '@noodle-borg/service';
 
 import type { SelfHostConfig } from './config.js';
 
@@ -75,7 +75,12 @@ export function createHttpAdmissionGate(
 function parseDecision(value: unknown): AdmissionDecision {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return UNAVAILABLE;
   const keys = Object.keys(value);
-  if ('allow' in value && value.allow === true && keys.length === 1) return { allow: true };
+  if ('allow' in value && value.allow === true) {
+    if (keys.length === 1) return { allow: true };
+    if (keys.length !== 2 || !('assistantExecution' in value)) return UNAVAILABLE;
+    const policy = parseAssistantExecutionPolicy(value.assistantExecution);
+    return policy === undefined ? UNAVAILABLE : { allow: true, assistantExecution: policy };
+  }
   if (
     !('allow' in value) ||
     value.allow !== false ||

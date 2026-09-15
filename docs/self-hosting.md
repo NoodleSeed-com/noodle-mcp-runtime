@@ -261,6 +261,20 @@ Keep `NOODLE_ADMISSION_URL` and `NOODLE_ADMISSION_TOKEN` for the existing busine
 
 The provider behavior follows the [GCS insert/precondition contract](https://cloud.google.com/storage/docs/json_api/v1/objects/insert) and [Cloud Run service-to-service authentication](https://cloud.google.com/run/docs/authenticating/service-to-service). Local fixture tests are not live cloud acceptance evidence.
 
+### Bounded assistant execution
+
+Set `NOODLE_ASSISTANT_EXECUTION_ADMISSION=true` to require an execution permit before assistant model work. It defaults to false; enabling it requires a configured admission gate at startup. A plain `{allow: true}` decision is insufficient for a claimed model operation. The policy service receives the trusted session, client, operation, request digest, selected deployment/version and resolved model identity. Its allow response must include a valid `assistantExecution` policy.
+
+The policy has `version: 1`, an opaque `policyId`, `reasoningEffort: 'none'`, and integer bounds named `maxModelRequests`, `maxInputTokens`, `maxCompletionTokens`, `maxTokensPerTurn`, `maxRequestBytes`, `maxToolCallsPerTurn`, `timeoutMs` and `maxTurnMs`. Unknown or malformed fields deny execution. Protected Responses requests use exact input-token counting before inference; unavailable or invalid counts fail closed. The runtime enforces the request, output, tool and time bounds centrally. Unsupported model actions and generated suggestions cannot bypass the required permit. Business allowances and financial accounting remain the external policy service's responsibility.
+
+Clients using this mode must prepare a turn with `POST /v1/assistant/operations`, supplying a stable UUID `requestKey` and the exact message `turn`. Send the returned `operationId` with the unchanged turn to `/v1/assistant/turns`. The operation is claimed once before model admission; a duplicate execution cannot start another provider sequence. `POST /v1/assistant/operations/status` reads its state using `operationId`. These endpoints require the scoped session and its browser origin; fresh session responses advertise them as `operations` and `operationStatus`.
+
+Retain the original correlation and operation identities after a lost response. A prepared operation can be recovered for its first execution; executing or uncertain work must use read-only status/transcript recovery, never automatic paid replay. Explicitly starting another conversation is a separate user action. Logged operation records are independent of disposable session storage, and an elapsed lease does not authorize re-execution. Apply the compatible schema migration before enabling this mode.
+
+For exact private routing, the Basic session exchange accepts optional `serverVersion` and returns a server-owned `sessionId` and `target` receipt. An unavailable explicit version does not fall back to the default. Backend credential provisioning can use the authenticated control-plane `PUT /v1/orgs/:org/apps/:app/envs/:env/assistant/clients/:clientId` with an `Idempotency-Key` and `{name, clientSecret}`. Persist the supplied high-entropy client identity and secret before that request; Core retains hashes and returns a safe creation/replay receipt, not a recoverable plaintext credential.
+
+Disable new admissions in the policy service to stop new model work. Keep required-permit enforcement enabled while previously issued sessions can still reach the runtime; turning this flag off removes that enforcement boundary. Already admitted bounded work may finish.
+
 ## HTTPS behind an operator-managed reverse proxy
 
 A proxy that terminates TLS forwards HTTP to the runtime. For authenticated MCP access in that topology,

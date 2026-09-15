@@ -17,21 +17,17 @@ import type {
   PublicEmbedStore,
 } from '@noodle-borg/assistant-gateway/portable';
 import {
-  ASSISTANT_SESSION_IDLE_MS,
   type AssistantStore,
-  effectiveAssistantBrowserConfiguration,
   executeAssistantAppToolCall,
-  isAssistantPageContext,
-  isAssistantVerifiedClaims,
   parseAssistantContextPreferences,
-  parseAssistantCustomerRouting,
+  prepareAssistantSessionIdentity,
+  prepareAssistantSessionRecord,
   refuseBridgeToolCall,
   refusePublicTurn,
   resolveInvocationContextSnapshot,
   resumeTurnMessage,
   resumeUnavailableMessage,
   shouldAutoResume,
-  surfaceBindingForOrigin,
   withAssistantSessionExecutionAuthority,
 } from '@noodle-borg/assistant-gateway/portable';
 import { canonicalizeAuthorizationClaimValues } from '@noodle-borg/auth';
@@ -60,10 +56,11 @@ import {
   assistantMessageTurnRequestSchema,
   assistantResumeTurnRequestSchema,
   assistantSessionResponseSchema,
+  parsePrivateAssistantSessionInput,
 } from '@noodle-borg/wire-contracts';
 import type { RuntimeTargetResolver } from '../application-runtime-target.js';
 import { admitAssistantRequest, assistantAppAdmissionOperation } from '../assistant-admission.js';
-import { sendForbidden, sendUnauthorized } from '../http-util.js';
+import { sendUnauthorized } from '../http-util.js';
 import type { ServerRegistry } from '../registry.js';
 import type { AuditSink } from '../store/audit.js';
 import type { ControlPlaneStore } from '../store.js';
@@ -74,6 +71,7 @@ import {
   findAssistantKnowledgeComponent,
   resolveAssistantKnowledge,
 } from './assistant-knowledge.js';
+import { claimAssistantExecution } from './assistant-operations.js';
 import {
   applyBrowserCors,
   assistantSessionEndpoints,
@@ -81,17 +79,20 @@ import {
   handleAssistantPreflight,
   now,
 } from './assistant-route-http.js';
-import { activeAssistantTarget, sessionScopedTarget } from './assistant-session-target.js';
+import {
+  activeAssistantTarget,
+  assistantSessionTargetReceipt,
+  sessionScopedTarget,
+} from './assistant-session-target.js';
 import { authorizeControlPlane } from './control-plane.js';
 
 export { applyBrowserCors, authenticateSession, handleAssistantPreflight, now };
-
-const SESSION_ABSOLUTE_MS = 2 * 60 * 60 * 1000;
 
 export interface AssistantRouteDeps {
   readonly registry: ServerRegistry;
   /** Optional external policy, separate from built-in MCP and public embed capacity counters. */
   readonly admissionGate?: AdmissionGate;
+  readonly requireAssistantExecutionAdmission?: boolean;
   readonly resolveRuntimeTarget?: RuntimeTargetResolver;
   readonly store: AssistantStore;
   /**
@@ -167,107 +168,38 @@ export async function handleAssistantSession(
   if (!client) return sendUnauthorized(res, 'invalid assistant client');
   const body = await readJsonBody(req, deps.maxBody);
   if (!body.ok) return sendJson(res, body.status, { error: body.error });
-  const parsed = body.value as {
-    origin?: unknown;
-    user?: {
-      id?: unknown;
-      email?: unknown;
-      name?: unknown;
-      roles?: unknown;
-      scopes?: unknown;
-    };
-    claims?: unknown;
-    signInTicket?: unknown;
-    context?: unknown;
-    preferences?: unknown;
-    routing?: unknown;
-    resume?: unknown;
-  };
-  if (typeof parsed.origin !== 'string') return sendForbidden(res, 'origin is not allowed');
-  if (
-    typeof parsed.user?.id !== 'string' ||
-    parsed.user.id.length < 1 ||
-    parsed.user.id.length > 240
-  ) {
-    return sendJson(res, 400, { error: 'user.id is required' });
-  }
-  // Clients are tenant-bound: sessions follow the tenant's ACTIVE deployment, and the origin
-  // allowlist is read from the live artifact, so `noodle deploy` alone updates a live embed.
-  // client.deploymentId/allowedOrigins remain as created-against audit data.
-  const target = await activeAssistantTarget(deps, client.tenant);
+  const envelope = parsePrivateAssistantSessionInput(body.value);
+  if (!envelope.ok)
+    return sendJson(res, envelope.error === 'origin is not allowed' ? 403 : 400, {
+      error: envelope.error,
+    });
+  const parsed = envelope.value;
+  const { serverVersion } = parsed;
+  const target = await activeAssistantTarget(deps, client.tenant, serverVersion);
   const assistant = target?.served.artifact.server.assistant;
   if (!target?.deploymentId || !assistant)
     return sendJson(res, 409, { error: 'assistant deployment is unavailable' });
-  if (!assistant.allowedOrigins.includes(parsed.origin)) {
-    return sendForbidden(res, 'origin is not allowed');
-  }
-  // Every session binds one exact authored surface (ADR 0201): the origin selects it, and an origin no
-  // surface owns is refused rather than admitted against the deployment-wide union. A pre-surfaces
-  // artifact has no surfaces to select from; its union remains its whole released contract.
-  const surfaceBinding = surfaceBindingForOrigin(assistant, parsed.origin);
-  if (surfaceBinding.kind === 'unowned') {
-    return sendForbidden(res, 'origin is not allowed');
-  }
-  const customerRouting = parseAssistantCustomerRouting(
-    target.served.artifact.customerEndpoints,
-    parsed.routing,
-  );
-  if (!customerRouting.ok) {
-    return sendJson(res, 400, {
-      error: 'invalid assistant routing',
-      ...(customerRouting.endpoint ? { endpoint: customerRouting.endpoint } : {}),
-    });
-  }
-  if (parsed.claims !== undefined && !isAssistantVerifiedClaims(parsed.claims)) {
-    return sendJson(res, 400, {
-      error: 'claims must be flat scalars (<=32 keys, values <=240 chars)',
-    });
-  }
-  const preferences =
-    parsed.preferences === undefined
-      ? undefined
-      : parseAssistantContextPreferences(parsed.preferences);
-  if (preferences?.ok === false) return sendJson(res, 400, { error: 'invalid preferences' });
-  // Only claims the author declared in embeddedAssistant({ sessionClaims }) pass through;
-  // undeclared keys are dropped (forward-compatible across backend/server deploy skew).
-  const declaredClaims = assistant.sessionClaims ?? {};
-  const claims = Object.fromEntries(
-    Object.entries(isAssistantVerifiedClaims(parsed.claims) ? parsed.claims : {}).filter(
-      ([key]) => key in declaredClaims,
-    ),
-  );
-  const current = now(deps);
-  const configuration = (
-    await effectiveAssistantBrowserConfiguration(
-      target.served.artifact.server,
-      client.tenant,
-      deps.appearance,
-      surfaceBinding.kind === 'pre-surfaces' ? undefined : surfaceBinding.kind,
-      target.businessNotice,
-    )
-  ).effective;
-  const roles = canonicalizeAuthorizationClaimValues(parsed.user.roles, 'role');
-  const scopes = canonicalizeAuthorizationClaimValues(parsed.user.scopes, 'scope');
-  // Hoisted so an elevation and a fresh exchange bind the *same* principal. Two constructions would be
-  // two places for the identity to drift, and the elevated one is the one nobody looks at again.
-  const caller = {
-    subject: parsed.user.id,
-    ...(typeof parsed.user.email === 'string' ? { email: parsed.user.email } : {}),
-    ...(typeof parsed.user.name === 'string' && parsed.user.name.length <= 240
-      ? { name: parsed.user.name }
-      : {}),
-    ...(preferences?.ok && preferences.value.locale ? { locale: preferences.value.locale } : {}),
-    ...(preferences?.ok && preferences.value.timeZone
-      ? { timeZone: preferences.value.timeZone }
-      : {}),
-    ...(roles.length === 0 ? {} : { roles }),
-    ...(scopes.length === 0 ? {} : { scopes }),
-    ...(Object.keys(claims).length > 0 ? { claims } : {}),
-    identityKind: 'customer' as const,
-    // Delegated connector credentials are resource-bound (ADR 0152): assistant-session callers
-    // carry the tenant's MCP resource audience just like OAuth-path customer callers.
+  const identity = prepareAssistantSessionIdentity(target.served.artifact, parsed, {
     audience: tenantMcpUrl(deps.serviceBase(req), client.tenant),
-  };
+    roles: canonicalizeAuthorizationClaimValues(parsed.user.roles, 'role'),
+    scopes: canonicalizeAuthorizationClaimValues(parsed.user.scopes, 'scope'),
+  });
+  if (!identity.ok)
+    return sendJson(res, identity.error === 'origin is not allowed' ? 403 : 400, {
+      error: identity.error,
+      ...('endpoint' in identity ? { endpoint: identity.endpoint } : {}),
+    });
+  const { caller } = identity;
+  const prepared = await prepareAssistantSessionRecord({
+    client,
+    deploymentId: target.deploymentId,
+    artifact: target.served.artifact,
+    identity,
+    appearance: deps.appearance,
+    businessNotice: target.businessNotice,
+    now: now(deps),
+  });
+  const configuration = prepared.record.configuration;
   if (
     !(await admitAssistantRequest(req, res, deps.admissionGate, {
       tenant: client.tenant,
@@ -287,39 +219,25 @@ export async function handleAssistantSession(
       signInTicket: parsed.signInTicket,
       client,
       resume: shouldAutoResume(parsed.resume),
-      origin: parsed.origin,
-      // The conversation lands on the surface owning the (validated) landing origin: signing in on
-      // the app surface continues under its projection (ADR 0201 amendment 2026-08-26).
-      ...(surfaceBinding.kind === 'pre-surfaces' ? {} : { boundSurface: surfaceBinding.kind }),
-      ...(customerRouting.customerRouting
-        ? { customerRouting: customerRouting.customerRouting }
-        : {}),
-      caller,
+      ...prepared.authentication,
       configuration,
       endpoints: assistantSessionEndpoints(deps.serviceBase(req)),
     });
   }
 
-  const session = await deps.store.createSession({
-    clientId: client.id,
-    tenant: client.tenant,
-    deploymentId: target.deploymentId,
-    modelSource: assistant.model.kind === 'noodle-managed' ? 'noodle-managed' : 'operator',
-    origin: parsed.origin,
-    ...(surfaceBinding.kind === 'pre-surfaces' ? {} : { boundSurface: surfaceBinding.kind }),
-    ...(customerRouting.customerRouting
-      ? { customerRouting: customerRouting.customerRouting }
-      : {}),
-    caller,
-    ...(isAssistantPageContext(parsed.context) ? { context: parsed.context } : {}),
-    ...(preferences?.ok ? { preferences: preferences.value } : {}),
-    ...(configuration ? { configuration } : {}),
-    createdAt: current.toISOString(),
-    expiresAt: new Date(current.getTime() + ASSISTANT_SESSION_IDLE_MS).toISOString(),
-    absoluteExpiresAt: new Date(current.getTime() + SESSION_ABSOLUTE_MS).toISOString(),
-  });
+  const receipt = await assistantSessionTargetReceipt(
+    deps.registry,
+    client.tenant,
+    target.deploymentId,
+    target.served.artifact.server.version,
+  );
+  if (!receipt || (serverVersion !== undefined && receipt.serverVersion !== serverVersion))
+    return sendJson(res, 409, { error: 'assistant deployment is unavailable' });
+  const session = await deps.store.createSession(prepared.record);
   const sessionBody = {
     token: session.token,
+    sessionId: session.session.id,
+    target: receipt,
     expiresAt: session.session.expiresAt,
     endpoints: assistantSessionEndpoints(deps.serviceBase(req)),
     ...(configuration ? { configuration } : {}),
@@ -360,7 +278,12 @@ export async function handleAssistantTurn(
   deps: AssistantRouteDeps,
 ): Promise<void> {
   const usageStartedAt = performance.now();
-  const session = await authenticateSession(req, res, deps);
+  const session = await authenticateSession(
+    req,
+    res,
+    deps,
+    deps.requireAssistantExecutionAdmission ? 'defer-to-app-operation' : 'session',
+  );
   if (!session) return;
   const usageTurnNumber = assistantTurnNumber(session);
   applyBrowserCors(req, res, session.origin);
@@ -370,6 +293,11 @@ export async function handleAssistantTurn(
   // decision, a counter key, or an audit payload.
   const target = await sessionScopedTarget(deps.registry, session, deps.resolveRuntimeTarget, req);
   if (!target) return sendJson(res, 409, { error: 'assistant deployment is unavailable' });
+  if (
+    deps.requireAssistantExecutionAdmission &&
+    (!isRecord(body.value) || typeof body.value.operationId !== 'string' || 'resume' in body.value)
+  )
+    return sendJson(res, 403, { error: 'assistant execution operation required' });
   const addressBucket = clientAddressBucket(req.socket.remoteAddress);
   let turn: AssistantMessageTurnRequest | undefined;
   let message: string;
@@ -451,105 +379,127 @@ export async function handleAssistantTurn(
   if (clientContext?.ok === false) {
     return sendJson(res, 400, { error: 'invalid client context' });
   }
-  const invocationContext = await resolveInvocationContextSnapshot({
-    artifact: target.served.artifact,
-    executeDeps: withAssistantSessionExecutionAuthority(
-      target.served.deps as ExecuteDeps,
-      target.served.artifact,
-      session,
-    ),
-    caller: session.caller,
-    instant: now(deps),
-    ...(session.preferences ? { applicationPreference: session.preferences } : {}),
-    ...(clientContext?.ok ? { clientHint: clientContext.value } : {}),
-  });
-  res.writeHead(200, {
-    'content-type': 'text/event-stream; charset=utf-8',
-    'cache-control': 'no-store',
-    connection: 'keep-alive',
-    'access-control-allow-origin': session.origin,
-    vary: 'Origin',
-  });
-  res.flushHeaders?.();
-  const events: AssistantEvent[] = [];
-  const stats = createAssistantTurnStats();
-  const emit = (event: AssistantEvent): void => {
-    events.push(event);
-    res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
-  };
-  let turnCompleted = false;
+  const execution = turn?.operationId
+    ? await claimAssistantExecution(req, res, deps, session, target, turn)
+    : undefined;
+  if (turn?.operationId && !execution) return;
+  let operationCompleted = false;
   try {
-    if (suggestionsRequested) {
-      try {
-        await deps.store.replaceLatestSuggestions(session.id, undefined);
-      } catch {
-        // Suggestions are optional; the assistant turn remains authoritative.
-      }
-    }
-    await runAgentTurn(
-      target,
-      session,
-      message.trim(),
-      invocationContext,
-      deps,
-      emit,
-      turn?.modelContext,
-      turn?.pageContext,
-      stats,
-      suggestionsRequested,
-    );
-    turnCompleted = true;
-  } catch (error) {
-    const failure = assistantModelFailure(error);
-    emit({ event: 'error', data: failure });
-    deps.logger?.warn('assistant.model.failed', {
-      org: session.tenant.org,
-      app: session.tenant.app,
-      env: session.tenant.env,
-      deploymentId: session.deploymentId,
-      code: failure.code,
-      ...(failure.status === undefined ? {} : { upstreamStatus: failure.status }),
-      retryable: failure.retryable,
-      modelSource:
-        session.modelSource ??
-        assistantModelSource(target?.served.artifact.server.assistant?.model),
-      transport: assistantModelTransport(target?.served.artifact.server.assistant?.model),
+    const invocationContext = await resolveInvocationContextSnapshot({
+      artifact: target.served.artifact,
+      executeDeps: withAssistantSessionExecutionAuthority(
+        target.served.deps as ExecuteDeps,
+        target.served.artifact,
+        session,
+      ),
+      caller: session.caller,
+      instant: now(deps),
+      ...(session.preferences ? { applicationPreference: session.preferences } : {}),
+      ...(clientContext?.ok ? { clientHint: clientContext.value } : {}),
     });
-  }
-  if (turnCompleted) {
-    const assistantContent = events
-      .filter((event) => event.event === 'content')
-      .map((event) => String(event.data.delta ?? ''))
-      .join('');
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      'access-control-allow-origin': session.origin,
+      vary: 'Origin',
+    });
+    res.flushHeaders?.();
+    const events: AssistantEvent[] = [];
+    const stats = createAssistantTurnStats();
+    const emit = (event: AssistantEvent): void => {
+      if (execution)
+        event = { ...event, data: { ...event.data, operationId: execution.operationId } };
+      events.push(event);
+      res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
+    };
+    let turnCompleted = false;
     try {
-      await deps.store.appendHistory(session.id, [
-        { role: 'user', content: message.trim(), kind: turn ? 'visible' : 'narration' },
-        ...(assistantContent
-          ? [{ role: 'assistant' as const, content: assistantContent, kind: 'visible' as const }]
-          : []),
-      ]);
-    } catch {
-      emit({ event: 'error', data: { code: 'conversation_state_failed', retryable: false } });
-      deps.logger?.warn('assistant.history.failed', {
+      if (suggestionsRequested) {
+        try {
+          await deps.store.replaceLatestSuggestions(session.id, undefined);
+        } catch {
+          // Suggestions are optional; the assistant turn remains authoritative.
+        }
+      }
+      await runAgentTurn(
+        target,
+        session,
+        message.trim(),
+        invocationContext,
+        deps,
+        emit,
+        turn?.modelContext,
+        turn?.pageContext,
+        stats,
+        suggestionsRequested,
+        execution?.binding,
+      );
+      turnCompleted = true;
+    } catch (error) {
+      const failure = assistantModelFailure(error);
+      emit({ event: 'error', data: { ...failure, ...(execution ? { retryable: false } : {}) } });
+      deps.logger?.warn('assistant.model.failed', {
         org: session.tenant.org,
         app: session.tenant.app,
         env: session.tenant.env,
         deploymentId: session.deploymentId,
+        code: failure.code,
+        ...(failure.status === undefined ? {} : { upstreamStatus: failure.status }),
+        retryable: failure.retryable,
+        modelSource:
+          session.modelSource ??
+          assistantModelSource(target?.served.artifact.server.assistant?.model),
+        transport: assistantModelTransport(target?.served.artifact.server.assistant?.model),
       });
     }
+    if (turnCompleted) {
+      const assistantContent = events
+        .filter((event) => event.event === 'content')
+        .map((event) => String(event.data.delta ?? ''))
+        .join('');
+      try {
+        await deps.store.appendHistory(session.id, [
+          { role: 'user', content: message.trim(), kind: turn ? 'visible' : 'narration' },
+          ...(assistantContent
+            ? [{ role: 'assistant' as const, content: assistantContent, kind: 'visible' as const }]
+            : []),
+        ]);
+      } catch {
+        emit({ event: 'error', data: { code: 'conversation_state_failed', retryable: false } });
+        deps.logger?.warn('assistant.history.failed', {
+          org: session.tenant.org,
+          app: session.tenant.app,
+          env: session.tenant.env,
+          deploymentId: session.deploymentId,
+        });
+      }
+    }
+    operationCompleted = turnCompleted && !events.some((event) => event.event === 'error');
+    if (execution)
+      await deps.store.operations.finish(
+        execution.operationId,
+        execution.scope,
+        operationCompleted ? 'completed' : 'unknown',
+      );
+    res.end(
+      `event: done\ndata: ${JSON.stringify(execution ? { operationId: execution.operationId } : {})}\n\n`,
+    );
+    const error = events.find((event) => event.event === 'error');
+    captureAssistantUsage(
+      deps.captureRequestEvent,
+      assistantTurnUsageRequestEvent(session, {
+        outcome: error === undefined ? 'delivered' : 'failed',
+        counters: stats,
+        turnNumber: usageTurnNumber,
+        durationMs: performance.now() - usageStartedAt,
+        ...(typeof error?.data.code === 'string' ? { errorKind: error.data.code } : {}),
+      }),
+    );
+  } finally {
+    if (execution && !operationCompleted)
+      await deps.store.operations.finish(execution.operationId, execution.scope, 'unknown');
   }
-  res.end('event: done\ndata: {}\n\n');
-  const error = events.find((event) => event.event === 'error');
-  captureAssistantUsage(
-    deps.captureRequestEvent,
-    assistantTurnUsageRequestEvent(session, {
-      outcome: error === undefined ? 'delivered' : 'failed',
-      counters: stats,
-      turnNumber: usageTurnNumber,
-      durationMs: performance.now() - usageStartedAt,
-      ...(typeof error?.data.code === 'string' ? { errorKind: error.data.code } : {}),
-    }),
-  );
 }
 
 /** Standard MCP operations exposed to an initialized app inside the embedded assistant host. */

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AssetStore } from './asset-store.js';
+import type { AssistantExecutionContext, AssistantExecutionPolicy } from './assistant-execution.js';
 import type { NamedDeploymentActivationHook } from './deployment-activation.js';
 import type { DeploymentAutomationAuthorizer } from './deployment-automation.js';
 import type { OrganizationProvisioningHook } from './organization-provisioning.js';
@@ -313,6 +314,7 @@ export type DataPlaneIdentityAuthorizer = (input: {
 export type AdmissionCategory = 'protocol' | 'discovery' | 'read' | 'execute';
 
 export interface AdmissionContext {
+  readonly assistantExecution?: AssistantExecutionContext;
   readonly routeId: string;
   readonly requestId?: string | number | null;
   readonly method: string;
@@ -329,7 +331,11 @@ export interface AdmissionContext {
 }
 
 export type AdmissionDecision =
-  | { readonly allow: true; readonly reason?: string }
+  | {
+      readonly allow: true;
+      readonly reason?: string;
+      readonly assistantExecution?: AssistantExecutionPolicy;
+    }
   | {
       readonly allow: false;
       readonly reason: string;

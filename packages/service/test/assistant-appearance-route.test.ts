@@ -15,6 +15,7 @@ const TENANT = { org: 'acme', app: 'site', env: 'prod' };
 
 const ARTIFACT = {
   server: {
+    version: '1.0.0',
     branding: {
       name: 'Acme Support',
       accent: '#2563EB',
@@ -55,6 +56,7 @@ beforeEach(async () => {
     appearance,
     store: sessions,
     registry: {
+      listDeployments: () => Promise.resolve([{ deploymentId: 'dep_1', serverVersion: '1' }]),
       getActiveByTenant: () =>
         Promise.resolve({ deploymentId: 'dep_1', served: { artifact, deps: {} } }),
     },

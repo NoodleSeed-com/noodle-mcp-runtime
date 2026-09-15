@@ -112,18 +112,16 @@ export async function runAgentTurn(
   pageContext?: AssistantPageContext,
   stats: AssistantTurnStats = createAssistantTurnStats(),
   suggestions = false,
+  executionBinding?: ResolvedAssistantModel,
 ): Promise<void> {
   // Every terminal failure in this loop is one shape: a code, and the turn ends. Naming it keeps the
   // dozen sites readable and stops a new one inventing a different envelope.
   const fail = (code: string) => emit({ event: 'error', data: { code } });
   const assistant = target.served.artifact.server.assistant;
   if (!assistant) return fail('assistant_unavailable');
-  const binding = await resolveAssistantModelBinding(
-    target,
-    session.tenant,
-    session.deploymentId,
-    deps,
-  );
+  const binding =
+    executionBinding ??
+    (await resolveAssistantModelBinding(target, session.tenant, session.deploymentId, deps));
   if (!binding) {
     return emit({
       event: 'error',
@@ -236,7 +234,12 @@ export async function runAgentTurn(
     if (!response.tool_calls?.length) {
       const assistantContent = response.content || streamedContent;
       if (assistantContent) messages.push({ role: 'assistant', content: assistantContent });
-      if (suggestions && step + 1 < bounds.steps && (remainingTokens ?? 1) > 0) {
+      if (
+        suggestions &&
+        !binding.requireExecutionAdmission &&
+        step + 1 < bounds.steps &&
+        (remainingTokens ?? 1) > 0
+      ) {
         try {
           const prompts = await requestAssistantSuggestedPrompts(
             binding,

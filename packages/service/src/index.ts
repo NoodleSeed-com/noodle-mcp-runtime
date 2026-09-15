@@ -44,6 +44,7 @@ export {
   NoodleOAuthControlPlaneGate,
   personalOrgSlug,
 } from '@noodle-borg/control-plane/portable';
+export { parseAssistantExecutionPolicy } from '@noodle-borg/module';
 export { ensureAuditSchema, PostgresAuditStore } from '@noodle-borg/module-audit';
 export * from '@noodle-borg/observability';
 export {

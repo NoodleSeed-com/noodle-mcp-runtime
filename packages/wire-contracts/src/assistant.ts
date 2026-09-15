@@ -32,9 +32,22 @@ const assistantSessionConfigurationSchema = z.object({
 
 export const assistantSessionResponseSchema = z.object({
   token: z.string().min(1),
+  /** Server-owned receipt on fresh private sessions; absent on legacy/elevation responses. */
+  sessionId: z.string().min(1).optional(),
+  target: z
+    .object({
+      org: z.string().min(1),
+      app: z.string().min(1),
+      env: z.string().min(1),
+      serverVersion: z.string().min(1),
+      deploymentId: z.string().min(1),
+    })
+    .optional(),
   expiresAt: z.string().min(1),
   endpoints: z.object({
     turns: z.url(),
+    operations: z.url().optional(),
+    operationStatus: z.url().optional(),
     toolConfirmations: z.url(),
     /** Additive interaction endpoint used by headless clients; absent on legacy services. */
     interactions: z.url().optional(),
@@ -124,6 +137,7 @@ export type AssistantPageContext = z.infer<typeof assistantPageContextSchema>;
  */
 export const assistantMessageTurnRequestSchema = z
   .object({
+    operationId: z.uuid().toLowerCase().optional(),
     message: z
       .string()
       .min(1)

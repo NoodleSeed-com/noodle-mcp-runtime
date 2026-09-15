@@ -1,13 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AssistantSessionRecord } from '@noodle-borg/assistant-gateway/portable';
 import type { AdmissionCategory, AdmissionContext, AdmissionGate } from '@noodle-borg/module';
+import { type AssistantExecutionPolicy, parseAssistantExecutionPolicy } from '@noodle-borg/module';
 import { sendJson } from '@noodle-borg/transport-http';
 
 type AssistantAdmissionIdentity = Pick<
   AssistantSessionRecord,
   'tenant' | 'deploymentId' | 'caller'
 >;
-type AssistantAdmissionOperation = Pick<AdmissionContext, 'method' | 'category' | 'name'>;
+type AssistantAdmissionOperation = Pick<
+  AdmissionContext,
+  'method' | 'category' | 'name' | 'serverVersion' | 'assistantExecution'
+>;
 
 /** Service-level assistant policy; MCP and public embed capacity accounting remain separate owners. */
 export async function admitAssistantRequest(
@@ -16,8 +20,9 @@ export async function admitAssistantRequest(
   gate: AdmissionGate | undefined,
   identity: AssistantAdmissionIdentity,
   operation?: AssistantAdmissionOperation,
+  executionPolicy?: (policy: AssistantExecutionPolicy) => void,
 ): Promise<boolean> {
-  if (gate === undefined) return true;
+  if (gate === undefined && executionPolicy === undefined) return true;
   const routeId = new URL(req.url ?? '/', 'http://assistant.invalid').pathname;
   const context: AdmissionContext = {
     routeId,
@@ -29,8 +34,19 @@ export async function admitAssistantRequest(
   };
   let status: 403 | 429 = 403;
   try {
-    const decision = await gate(context);
-    if (decision?.allow === true) return true;
+    const decision = await gate?.(context);
+    if (decision?.allow === true) {
+      const policy =
+        decision.assistantExecution === undefined
+          ? undefined
+          : parseAssistantExecutionPolicy(decision.assistantExecution);
+      if (decision.assistantExecution !== undefined && policy === undefined)
+        throw new Error('invalid policy');
+      if (executionPolicy !== undefined && policy === undefined)
+        throw new Error('execution policy required');
+      if (policy !== undefined) executionPolicy?.(policy);
+      return true;
+    }
     if (decision?.allow === false) {
       status = decision.status === 429 ? 429 : 403;
       if (
@@ -72,7 +88,7 @@ export function assistantAppAdmissionOperation(
 function sessionOperation(routeId: string): AssistantAdmissionOperation {
   const method = routeId.replace(/^\/v1\//, '');
   const category: AdmissionCategory =
-    method === 'assistant/transcript'
+    method === 'assistant/transcript' || method === 'assistant/operations/status'
       ? 'read'
       : method === 'assistant/turns' ||
           method === 'assistant/suggestions' ||

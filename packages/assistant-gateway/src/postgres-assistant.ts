@@ -1,5 +1,9 @@
 import type { Pool } from 'pg';
 import type {
+  EnsureAssistantClientInput,
+  EnsureAssistantClientResult,
+} from './assistant-client-ensure.js';
+import type {
   AssistantConfirmationInteractionRecord,
   AssistantInteractionClaimResult,
   AssistantInteractionCompletion,
@@ -29,16 +33,23 @@ import {
   type AssistantSessionElevation,
 } from './assistant-store.js';
 import type { AssistantRecoverableView } from './assistant-view-availability.js';
+import {
+  ensureAssistantClientSchema,
+  ensurePostgresAssistantClient,
+} from './postgres-assistant-client-ensure.js';
 import { PostgresAssistantInteractions } from './postgres-assistant-interactions.js';
+import { PostgresAssistantOperations } from './postgres-assistant-operations.js';
 import type { TenantRef } from './tenant-ref.js';
 
 /** Durable clients + shared, crash-disposable active sessions for multi-instance assistant gateways. */
 export class PostgresAssistantStore implements AssistantStore {
+  readonly operations: PostgresAssistantOperations;
   readonly #pool: Pool;
   readonly #interactions: PostgresAssistantInteractions;
 
   constructor(pool: Pool) {
     this.#pool = pool;
+    this.operations = new PostgresAssistantOperations(pool);
     this.#interactions = new PostgresAssistantInteractions(pool);
   }
 
@@ -61,6 +72,8 @@ export class PostgresAssistantStore implements AssistantStore {
       CREATE INDEX IF NOT EXISTS assistant_clients_tenant_idx
         ON assistant_clients (org_slug, app_slug, environment)
     `);
+    await ensureAssistantClientSchema(this.#pool);
+    await this.operations.ensureSchema();
     await this.#pool.query(`
       CREATE UNLOGGED TABLE IF NOT EXISTS assistant_sessions (
         id text PRIMARY KEY,
@@ -137,6 +150,10 @@ export class PostgresAssistantStore implements AssistantStore {
         consumed_at timestamptz NOT NULL
       )
     `);
+  }
+
+  async ensureClient(input: EnsureAssistantClientInput): Promise<EnsureAssistantClientResult> {
+    return ensurePostgresAssistantClient(this.#pool, input);
   }
 
   async createClient(input: {
