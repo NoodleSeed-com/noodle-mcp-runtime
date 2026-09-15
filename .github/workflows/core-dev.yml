@@ -78,7 +78,7 @@ jobs:
           set -euo pipefail
           proxy=cloud-sql-proxy
           curl --fail --silent --show-error --location \
-            https://github.com/GoogleCloudPlatform/cloud-sql-proxy/releases/download/v2.23.0/cloud-sql-proxy.linux.amd64 \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.23.0/cloud-sql-proxy.linux.amd64 \
             --output "$proxy"
           echo 'cd689d582b826fa5bc82c01ccc14e45a58200c3cefbf923ce96c422825e4e6f6  cloud-sql-proxy' | sha256sum --check
           chmod 0700 "$proxy"
