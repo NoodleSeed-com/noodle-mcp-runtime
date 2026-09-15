@@ -72,23 +72,8 @@ export class PostgresOperationEvidenceStore implements OperationEvidenceStore {
     };
   }
 
-  async ensureSchema(): Promise<void> {
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS operation_evidence (
-      scope_key text NOT NULL, id text NOT NULL, parent_id text, protected jsonb NOT NULL,
-      started_at bigint NOT NULL, execution_deadline bigint NOT NULL, history_expires_at bigint NOT NULL,
-      outcome text NOT NULL CHECK (outcome IN ('dispatching','completed','rejected','accepted','unknown','returned')),
-      completed_at bigint, PRIMARY KEY(scope_key,id)
-    )`);
-    await this.pool.query('ALTER TABLE operation_evidence ADD COLUMN IF NOT EXISTS parent_id text');
-    await this.pool.query(
-      'CREATE TABLE IF NOT EXISTS operation_history_settings (scope_key text PRIMARY KEY, days integer NOT NULL CHECK(days BETWEEN 1 AND 365), revision integer NOT NULL)',
-    );
-    await this.pool.query(
-      'CREATE INDEX IF NOT EXISTS operation_evidence_expiry ON operation_evidence(history_expires_at)',
-    );
-    await this.pool.query(
-      'CREATE INDEX IF NOT EXISTS operation_evidence_history ON operation_evidence(scope_key,started_at DESC,id)',
-    );
+  ensureSchema(): Promise<void> {
+    return ensureOperationEvidenceSchema(this.pool);
   }
 
   async readRetention(scope: InstallationScope): Promise<OperationHistorySetting | undefined> {
@@ -217,4 +202,24 @@ export class PostgresOperationEvidenceStore implements OperationEvidenceStore {
       ...(row.completed_at === null ? {} : { completedAt: Number(row.completed_at) }),
     };
   }
+}
+
+/** Canonical schema-only owner; no encryption key or runtime instance needed. */
+export async function ensureOperationEvidenceSchema(pool: Pool): Promise<void> {
+  await pool.query(`CREATE TABLE IF NOT EXISTS operation_evidence (
+      scope_key text NOT NULL, id text NOT NULL, parent_id text, protected jsonb NOT NULL,
+      started_at bigint NOT NULL, execution_deadline bigint NOT NULL, history_expires_at bigint NOT NULL,
+      outcome text NOT NULL CHECK (outcome IN ('dispatching','completed','rejected','accepted','unknown','returned')),
+      completed_at bigint, PRIMARY KEY(scope_key,id)
+    )`);
+  await pool.query('ALTER TABLE operation_evidence ADD COLUMN IF NOT EXISTS parent_id text');
+  await pool.query(
+    'CREATE TABLE IF NOT EXISTS operation_history_settings (scope_key text PRIMARY KEY, days integer NOT NULL CHECK(days BETWEEN 1 AND 365), revision integer NOT NULL)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS operation_evidence_expiry ON operation_evidence(history_expires_at)',
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS operation_evidence_history ON operation_evidence(scope_key,started_at DESC,id)',
+  );
 }

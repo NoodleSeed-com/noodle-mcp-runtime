@@ -62,29 +62,8 @@ export class PostgresOperationCoordinationStore implements OperationCoordination
     readonly now: () => number = Date.now,
   ) {}
 
-  async ensureSchema(): Promise<void> {
-    await withPostgresTransaction(this.pool, async (client) => {
-      await client.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended('operation-coordination-schema:' || current_schema(),0))",
-      );
-      await client.query(`CREATE TABLE IF NOT EXISTS external_operation_coordination (
-      resource text PRIMARY KEY, scope_key text NOT NULL, token text NOT NULL,
-      protected jsonb NOT NULL, state text NOT NULL CHECK(state IN ('executing','unknown'))
-    )`);
-      await client.query(`CREATE INDEX IF NOT EXISTS external_operation_coordination_scope
-      ON external_operation_coordination(scope_key,resource)`);
-      await client.query(`CREATE TABLE IF NOT EXISTS external_operation_coordination_resolutions (
-      resource text NOT NULL, token text NOT NULL, scope_key text NOT NULL,
-      protected jsonb NOT NULL, resolved_at bigint NOT NULL,
-      PRIMARY KEY(resource,token)
-    )`);
-      await client.query(`CREATE OR REPLACE FUNCTION reject_external_operation_resolution_change() RETURNS trigger AS $$
-      BEGIN RAISE EXCEPTION 'operation coordination resolutions are append-only'; END
-      $$ LANGUAGE plpgsql;
-      DROP TRIGGER IF EXISTS external_operation_resolution_append_only ON external_operation_coordination_resolutions;
-      CREATE TRIGGER external_operation_resolution_append_only BEFORE UPDATE OR DELETE ON external_operation_coordination_resolutions
-      FOR EACH ROW EXECUTE FUNCTION reject_external_operation_resolution_change()`);
-    });
+  ensureSchema(): Promise<void> {
+    return ensureOperationCoordinationSchema(this.pool);
   }
 
   /** Deployment-operator cutover only: source writers must be fenced before taking the reviewed snapshot. */
@@ -296,4 +275,30 @@ async function lockResource(client: PoolClient, resource: string): Promise<void>
     "SELECT pg_advisory_xact_lock(hashtextextended('external-operation-coordination:' || $1, 0))",
     [resource],
   );
+}
+
+/** Canonical schema-only owner; no encryption key or runtime instance needed. */
+export async function ensureOperationCoordinationSchema(pool: Pool): Promise<void> {
+  await withPostgresTransaction(pool, async (client) => {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('operation-coordination-schema:' || current_schema(),0))",
+    );
+    await client.query(`CREATE TABLE IF NOT EXISTS external_operation_coordination (
+      resource text PRIMARY KEY, scope_key text NOT NULL, token text NOT NULL,
+      protected jsonb NOT NULL, state text NOT NULL CHECK(state IN ('executing','unknown'))
+    )`);
+    await client.query(`CREATE INDEX IF NOT EXISTS external_operation_coordination_scope
+      ON external_operation_coordination(scope_key,resource)`);
+    await client.query(`CREATE TABLE IF NOT EXISTS external_operation_coordination_resolutions (
+      resource text NOT NULL, token text NOT NULL, scope_key text NOT NULL,
+      protected jsonb NOT NULL, resolved_at bigint NOT NULL,
+      PRIMARY KEY(resource,token)
+    )`);
+    await client.query(`CREATE OR REPLACE FUNCTION reject_external_operation_resolution_change() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'operation coordination resolutions are append-only'; END
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS external_operation_resolution_append_only ON external_operation_coordination_resolutions;
+      CREATE TRIGGER external_operation_resolution_append_only BEFORE UPDATE OR DELETE ON external_operation_coordination_resolutions
+      FOR EACH ROW EXECUTE FUNCTION reject_external_operation_resolution_change()`);
+  });
 }

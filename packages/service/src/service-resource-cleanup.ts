@@ -59,7 +59,11 @@ export function listenHttpServer(http: Server, port: number, host: string): Prom
 
 export function closeHttpServer(http: Server): Promise<void> {
   return new Promise((resolve, reject) => {
-    http.close((error) => (error === undefined ? resolve() : reject(error)));
+    const deadline = setTimeout(() => http.closeAllConnections(), 5000);
+    http.close((error) => {
+      clearTimeout(deadline);
+      error === undefined ? resolve() : reject(error);
+    });
   });
 }
 

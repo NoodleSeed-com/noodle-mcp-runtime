@@ -17,6 +17,8 @@ import type { PostgresPool } from './store/cloudsql-pool.js';
 import type { ArtifactStore, TenantBridgeAuthConfig } from './store.js';
 
 export type ServeServiceOptions = ServiceOptions & {
+  /** External mode validates the canonical schema; integrated OAuth and user modules are unsupported. */
+  readonly schemaMode?: 'initialize' | 'external';
   /** Stable HMAC identity key; falls back to the existing business-source key or local master key. */
   readonly operationEvidenceIdentityKey?: string;
   /** Shared restore fence. Rotate before reopening a restored database to invalidate old confirmations. */

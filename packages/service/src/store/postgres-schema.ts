@@ -226,16 +226,19 @@ export async function ensureArtifactSchema(
 
 /** Immutable canonical-principal ownership for the one personal organization. */
 async function ensurePersonalWorkspaceBindingSchema(pool: Pool): Promise<void> {
-  await pool.query(`
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`
     CREATE TABLE IF NOT EXISTS personal_workspace_bindings (
       principal_subject       text PRIMARY KEY,
       org_slug                text NOT NULL UNIQUE REFERENCES orgs(slug) ON DELETE RESTRICT,
       created_at              timestamptz NOT NULL DEFAULT now()
     )
   `);
-  // Older hosted schemas coupled this neutral principal binding to billing columns. Retain their data,
-  // but permit portable/self-hosted writers to create a binding without commercial state.
-  await pool.query(`
+    // Older hosted schemas coupled this neutral principal binding to billing columns. Retain their data,
+    // but permit portable/self-hosted writers to create a binding without commercial state.
+    await client.query(`
     DO $$
     BEGIN
       IF EXISTS (
@@ -250,7 +253,7 @@ async function ensurePersonalWorkspaceBindingSchema(pool: Pool): Promise<void> {
       END IF;
     END $$
   `);
-  await pool.query(`
+    await client.query(`
     CREATE OR REPLACE FUNCTION reject_personal_workspace_binding_mutation()
     RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -258,16 +261,16 @@ async function ensurePersonalWorkspaceBindingSchema(pool: Pool): Promise<void> {
     END
     $$
   `);
-  await pool.query(`
+    await client.query(`
     DROP TRIGGER IF EXISTS personal_workspace_bindings_immutable
     ON personal_workspace_bindings
   `);
-  await pool.query(`
+    await client.query(`
     CREATE TRIGGER personal_workspace_bindings_immutable
     BEFORE UPDATE OR DELETE ON personal_workspace_bindings
     FOR EACH ROW EXECUTE FUNCTION reject_personal_workspace_binding_mutation()
   `);
-  await pool.query(`
+    await client.query(`
     CREATE OR REPLACE FUNCTION reject_personal_workspace_owner_mutation()
     RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -299,15 +302,22 @@ async function ensurePersonalWorkspaceBindingSchema(pool: Pool): Promise<void> {
     END
     $$
   `);
-  await pool.query(`
+    await client.query(`
     DROP TRIGGER IF EXISTS personal_workspace_owner_immutable
     ON org_members
   `);
-  await pool.query(`
+    await client.query(`
     CREATE TRIGGER personal_workspace_owner_immutable
     BEFORE INSERT OR UPDATE OR DELETE ON org_members
     FOR EACH ROW EXECUTE FUNCTION reject_personal_workspace_owner_mutation()
   `);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Idempotent persistence schema for revocable, client-bound Developer Access Grants. */

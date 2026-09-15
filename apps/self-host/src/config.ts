@@ -7,9 +7,18 @@ export interface SelfHostConfig {
   readonly host: string;
   readonly port: number;
   readonly publicBaseUrl: string;
-  readonly assetRoot: string;
+  readonly trustProxy: boolean;
+  readonly assetRoot?: string;
+  readonly assetStorage: 'filesystem' | 'gcs';
+  readonly assetBucket?: string;
+  readonly schemaMode: 'initialize' | 'external';
   readonly assetIdentitySalt: string;
-  readonly admission?: { readonly url: string; readonly token: string };
+  readonly admission?: {
+    readonly url: string;
+    readonly token: string;
+    readonly googleAudience?: string;
+    readonly timeoutMs?: number;
+  };
   readonly ownerAuth?:
     | { readonly kind: 'external'; readonly issuer: string; readonly jwksUri: string }
     | {
@@ -29,6 +38,12 @@ const KNOWN_NOODLE_VARIABLES = new Set([
   'NOODLE_BUILD_VERSION',
   'NOODLE_BUILD_SHA',
   'NOODLE_BUILD_TIME',
+  'NOODLE_ASSET_STORAGE',
+  'NOODLE_ASSET_BUCKET',
+  'NOODLE_SCHEMA_MODE',
+  'NOODLE_TRUST_PROXY',
+  'NOODLE_ADMISSION_GOOGLE_AUDIENCE',
+  'NOODLE_ADMISSION_TIMEOUT_MS',
   'NOODLE_ADMISSION_URL',
   'NOODLE_ADMISSION_TOKEN',
   'NOODLE_SECRET_MASTER_KEY',
@@ -77,13 +92,35 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
   const publicBaseUrl = normalizePublicBaseUrl(
     optional(env, 'PUBLIC_BASE_URL') ?? 'http://localhost:8787',
   );
-  const assetRoot = required(env, 'NOODLE_ASSET_ROOT');
-  validateAssetRoot(assetRoot);
+  const proxySetting = env.NOODLE_TRUST_PROXY;
+  if (proxySetting !== undefined && proxySetting !== 'true' && proxySetting !== 'false')
+    throw configurationError('NOODLE_TRUST_PROXY must be true or false');
+  const trustProxy = proxySetting === 'true';
+  if (trustProxy && new URL(publicBaseUrl).protocol !== 'https:')
+    throw configurationError('NOODLE_TRUST_PROXY requires an HTTPS PUBLIC_BASE_URL');
+  const assetStorage = optional(env, 'NOODLE_ASSET_STORAGE') ?? 'filesystem';
+  if (assetStorage !== 'filesystem' && assetStorage !== 'gcs')
+    throw configurationError('NOODLE_ASSET_STORAGE must be filesystem or gcs');
+  const assetRoot = optional(env, 'NOODLE_ASSET_ROOT');
+  const assetBucket = optional(env, 'NOODLE_ASSET_BUCKET');
+  if (assetStorage === 'filesystem') {
+    validateAssetRoot(required(env, 'NOODLE_ASSET_ROOT'));
+    if (assetBucket !== undefined) throw configurationError('NOODLE_ASSET_BUCKET requires gcs');
+  } else {
+    if (!/^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$/.test(required(env, 'NOODLE_ASSET_BUCKET')))
+      throw configurationError('NOODLE_ASSET_BUCKET is invalid');
+    if (assetRoot !== undefined) throw configurationError('NOODLE_ASSET_ROOT requires filesystem');
+  }
+  const schemaMode = optional(env, 'NOODLE_SCHEMA_MODE') ?? 'initialize';
+  if (schemaMode !== 'initialize' && schemaMode !== 'external')
+    throw configurationError('NOODLE_SCHEMA_MODE must be initialize or external');
   const assetIdentitySalt = required(env, 'NOODLE_ASSET_IDENTITY_SALT');
   validateAssetIdentitySalt(assetIdentitySalt);
 
   const ownerAuth = resolveOwnerAuth(env);
   const admission = resolveAdmission(env);
+  if (schemaMode === 'external' && ownerAuth?.kind === 'google')
+    throw configurationError('external schema mode does not support integrated OAuth');
   if (admission !== undefined && ownerAuth?.kind !== 'external') {
     throw configurationError(
       'NOODLE_ADMISSION_URL requires external owner authentication with NOODLE_OAUTH_ISSUER and NOODLE_OAUTH_JWKS_URI',
@@ -96,7 +133,11 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
     host,
     port,
     publicBaseUrl,
-    assetRoot,
+    trustProxy,
+    ...(assetRoot === undefined ? {} : { assetRoot }),
+    assetStorage,
+    ...(assetBucket === undefined ? {} : { assetBucket }),
+    schemaMode,
     assetIdentitySalt,
     ...(ownerAuth === undefined ? {} : { ownerAuth }),
     ...(admission === undefined ? {} : { admission }),
@@ -106,7 +147,15 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
 function resolveAdmission(env: Environment): SelfHostConfig['admission'] {
   const url = optional(env, 'NOODLE_ADMISSION_URL');
   const token = optional(env, 'NOODLE_ADMISSION_TOKEN');
-  if (url === undefined && token === undefined) return undefined;
+  const googleAudience = optional(env, 'NOODLE_ADMISSION_GOOGLE_AUDIENCE');
+  const timeout = optional(env, 'NOODLE_ADMISSION_TIMEOUT_MS');
+  if (
+    url === undefined &&
+    token === undefined &&
+    googleAudience === undefined &&
+    timeout === undefined
+  )
+    return undefined;
 
   const admissionUrl = required(env, 'NOODLE_ADMISSION_URL');
   const admissionToken = required(env, 'NOODLE_ADMISSION_TOKEN');
@@ -125,7 +174,34 @@ function resolveAdmission(env: Environment): SelfHostConfig['admission'] {
       'NOODLE_ADMISSION_TOKEN must be a generated 32-byte canonical base64url secret',
     );
   }
-  return { url: admissionUrl, token: admissionToken };
+  if (googleAudience !== undefined) {
+    const audience = parseHttpUrl(googleAudience, 'NOODLE_ADMISSION_GOOGLE_AUDIENCE');
+    validateOriginShape(audience, 'NOODLE_ADMISSION_GOOGLE_AUDIENCE');
+    if (
+      audience.protocol !== 'https:' ||
+      !audience.hostname.endsWith('.run.app') ||
+      audience.port ||
+      googleAudience !== audience.origin ||
+      audience.origin !== parsed.origin
+    )
+      throw configurationError(
+        'NOODLE_ADMISSION_GOOGLE_AUDIENCE must equal the HTTPS Cloud Run policy origin',
+      );
+  }
+  const timeoutMs = timeout === undefined ? 2000 : Number(timeout);
+  if (
+    (timeout !== undefined && !/^\d+$/.test(timeout)) ||
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 10000
+  )
+    throw configurationError('NOODLE_ADMISSION_TIMEOUT_MS must be 1 through 10000');
+  return {
+    url: admissionUrl,
+    token: admissionToken,
+    ...(timeout === undefined ? {} : { timeoutMs }),
+    ...(googleAudience === undefined ? {} : { googleAudience }),
+  };
 }
 
 function resolveOwnerAuth(env: Environment): SelfHostConfig['ownerAuth'] {
@@ -328,4 +404,12 @@ function parseHttpUrl(value: string, variableName: string): URL {
 
 function configurationError(message: string): Error {
   return new Error(`self-host configuration: ${message}`);
+}
+
+/** Migration configuration deliberately has no HTTP, authentication or asset dependencies. */
+export function resolveSelfHostMigrationConfig(env: Environment): { databaseUrl: string } {
+  rejectUnsupportedNoodleVariables(env);
+  const databaseUrl = required(env, 'DATABASE_URL');
+  validateDatabaseUrl(databaseUrl);
+  return { databaseUrl };
 }

@@ -222,8 +222,49 @@ You own deployment and operations beyond this local reference stack. Before expo
 TLS-terminating reverse proxy, restrict network access, configure a real `PUBLIC_BASE_URL`, choose and test the
 end-user OAuth boundary, test the documented backup/restore procedure for your environment, establish an upgrade
 procedure, and monitor both PostgreSQL and Noodle.
-The filesystem asset store is a single-host boundary; multi-node operation needs a shared asset adapter.
+The filesystem asset store is a single-host boundary. For independent managed instances, use the private GCS provider and external schema mode described below.
 
 Read the [security boundary](security.md) and [compatibility policy](compatibility-and-upgrades.md) before going
 beyond evaluation. For community help, see [SUPPORT.md](../SUPPORT.md). Report vulnerabilities through
 [SECURITY.md](../SECURITY.md), never in a public issue.
+
+
+## Independent managed instances
+
+Set `NOODLE_ASSET_STORAGE=gcs` and `NOODLE_ASSET_BUCKET` to a private bucket with uniform bucket-level access. Omit `NOODLE_ASSET_ROOT`; preserve `NOODLE_ASSET_IDENTITY_SALT` and the runtime master key across replacements. The filesystem provider remains the default and requires its root. GCS mode uses the attached Google service account through the fixed metadata server and the official GCS JSON API; JSON key files and local ADC impersonation are not supported by this adapter. Grant the running identity object read/create access on only the selected bucket (the standard `roles/storage.objectUser` role includes the required permissions). Never make this bucket public or add an object-expiration rule that deletes reachable assets.
+
+The runtime stores immutable, validated image envelopes under `objects/` and immutable deployment reachability records under `reachability/`. It does not implement automatic garbage collection. A domain-separated HMAC upload capability binds the full trusted scope, identity, hash, MIME, dimensions, byte length and ten-minute expiry. Capabilities work on any instance; treat upload URLs as bearer capabilities and do not log them. Uploads validate bytes before atomic create-if-absent. Replay/racing writes return 409 and cannot overwrite a committed object. Deployment verification and public reads recheck envelope, byte hash and image metadata. Only image bytes are exposed at `/__noodle/hosted-assets/`; no listing, reachability or stored metadata route exists. Limits are 100 assets and 50 MiB per plan, 10 MiB per file, 16 KiB stored metadata. Provider operations have a ten-second deadline.
+
+### Database migration and startup
+
+For the initial external-owner-authentication profile, run a separate migration job before starting instances:
+
+```sh
+DATABASE_URL='postgresql://migration-role@database/runtime' node apps/self-host/dist/main.js migrate
+```
+
+Supply the actual migration credential through your job's secret mechanism, not shell history. This command requires only `DATABASE_URL`; it does not need the runtime master key, admin token, assets, OAuth credentials, or HTTP configuration. It constructs no HTTP listener, asset provider, background worker or integrated OAuth app. `NOODLE_BUILD_SHA`, if available, is recorded as nonsecret build evidence.
+
+The migration role owns the runtime database/schema objects. Configure its default privileges so the application role inherits table SELECT/INSERT/UPDATE/DELETE and sequence USAGE; grant schema USAGE and existing-object permissions. After the first migration, explicitly revoke INSERT/UPDATE/DELETE on `public.noodle_schema_contract` from the application role and grant only SELECT on that ledger. Revoke schema CREATE and database CREATE/TEMP privileges from the application role and PUBLIC where appropriate. Do not supply the migration credential to the serving process.
+
+The serving process sets `NOODLE_SCHEMA_MODE=external` with the application-role `DATABASE_URL`. It validates the schema marker before any workers/listener start, constructs the same PostgreSQL stores, and skips only their explicit schema initialization. The automatic audit module stays active. This profile supports no integrated Core OAuth, custom modules, application connections, custom assistant stores, or disabled business persistence; those configurations fail startup. The existing default `initialize` mode retains ordinary self-host behavior. A Unix socket host query in the PostgreSQL URL is passed through unchanged; the pool maximum remains five.
+
+Migration execution uses one stable database advisory lock on a dedicated checked-out connection, with a ten-second lock-acquisition deadline, sixty-second statement timeout and ten-minute run deadline. Losing the lock fails the job and stops further pool work. The marker is published after the complete canonical schema list succeeds. An exact completed plan skips; an older generation refuses. Application revisions may overlap only within the declared compatible epoch/profile. The source schema fingerprint test requires an explicit generation/epoch review for schema-owner changes. Incompatible upgrades need a separate reviewed procedure; this is not an arbitrary online upgrade/rollback mechanism. Personal-workspace trigger replacement is transactional.
+
+External mode uses lazy deployment recovery. `/readyz` follows schema validation and store construction, but it does not certify every persisted deployment has compiled successfully. Verify actual tools and widget resources after replacement. SIGTERM drains normal work, force-closes HTTP connections after five seconds, and exits with failure if shutdown exceeds eight seconds; interrupted in-flight work is not guaranteed to finish.
+
+### Admission to a private Cloud Run policy API
+
+Keep `NOODLE_ADMISSION_URL` and `NOODLE_ADMISSION_TOKEN` for the existing business-policy contract. Optionally set `NOODLE_ADMISSION_GOOGLE_AUDIENCE` to the exact HTTPS `*.run.app` origin of that URL, without a trailing slash. The runtime obtains an audience-bound Google ID token from the fixed metadata identity endpoint, sends it as `X-Serverless-Authorization`, and retains the business bearer in `Authorization`. Other origins, credentials in URLs, non-HTTPS audiences and redirects are rejected. The attached service account needs invocation permission on that policy service only.
+
+`NOODLE_ADMISSION_TIMEOUT_MS` accepts integers from 1 to 10000, default 2000. One deadline covers metadata retrieval, policy request and bounded response reading. Cached ID tokens refresh at least sixty seconds before expiry. Metadata/policy errors fail closed with the existing generic admission-unavailable decision, without provider details or token logging.
+
+The provider behavior follows the [GCS insert/precondition contract](https://cloud.google.com/storage/docs/json_api/v1/objects/insert) and [Cloud Run service-to-service authentication](https://cloud.google.com/run/docs/authenticating/service-to-service). Local fixture tests are not live cloud acceptance evidence.
+
+## HTTPS behind an operator-managed reverse proxy
+
+A proxy that terminates TLS forwards HTTP to the runtime. For authenticated MCP access in that topology,
+explicitly configure the runtime's [trusted proxy option](configuration.md#tls-terminating-reverse-proxy)
+so it verifies the externally visible HTTPS resource audience. The default local Compose profile continues
+to ignore forwarding headers and needs no change. Proxy trust does not weaken issuer, signature, expiry,
+or tenant-audience checks, and it does not create or secure the reverse proxy itself.

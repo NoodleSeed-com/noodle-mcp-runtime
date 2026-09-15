@@ -294,6 +294,7 @@ export {
   createHostedMcpRequestStateManager,
   resolveMcpProtocolMode,
 } from './mcp-protocol-runtime.js';
+export { type MigratePostgresOptions, migratePostgresSchema } from './migrate.js';
 export {
   type ActiveDeveloperGrantInput,
   activeDeveloperGrant,
@@ -354,6 +355,7 @@ export {
   ServerRegistry,
 } from './registry.js';
 export { deploymentOwnerSubject } from './registry-helpers.js';
+export { POSTGRES_SCHEMA_CONTRACT } from './schema-contract.js';
 export { type RunningService, serveService } from './serve.js';
 export type { ServeServiceOptions } from './serve-options.js';
 export { createServiceHandler } from './service.js';

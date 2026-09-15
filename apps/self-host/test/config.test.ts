@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSelfHostConfig } from '../src/config.js';
+import { resolveSelfHostConfig, resolveSelfHostMigrationConfig } from '../src/config.js';
 
 const MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 const ADMIN_TOKEN = 'LQPPSnvpT4TMomooI4tXegZQJQFxeEJr2Sn9sYrZj9Y';
@@ -400,5 +400,68 @@ describe('managed admission identity requirement', () => {
         NOODLE_OAUTH_GOOGLE_REDIRECT_URI: 'http://127.0.0.1:9080/callback',
       }),
     ).toThrow('external owner authentication');
+  });
+});
+
+describe('managed instance configuration', () => {
+  it('uses a private GCS bucket without a filesystem root and preserves Unix socket URLs', () => {
+    const env = validEnvironment();
+    delete env.NOODLE_ASSET_ROOT;
+    const database =
+      'postgresql://app:local-only@localhost/runtime?host=%2Fcloudsql%2Fproject%3Aregion%3Ainstance';
+    expect(
+      resolveSelfHostConfig({
+        ...env,
+        DATABASE_URL: database,
+        NOODLE_ASSET_STORAGE: 'gcs',
+        NOODLE_ASSET_BUCKET: 'example-private-assets',
+        NOODLE_SCHEMA_MODE: 'external',
+      }),
+    ).toMatchObject({ databaseUrl: database, assetStorage: 'gcs', schemaMode: 'external' });
+    expect(() => resolveSelfHostConfig({ ...env, NOODLE_ASSET_STORAGE: 'gcs' })).toThrow(
+      'NOODLE_ASSET_BUCKET',
+    );
+    expect(() =>
+      resolveSelfHostConfig({
+        ...validEnvironment(),
+        NOODLE_ASSET_STORAGE: 'gcs',
+        NOODLE_ASSET_BUCKET: 'example-private-assets',
+      }),
+    ).toThrow('NOODLE_ASSET_ROOT');
+  });
+  it('requires only the migration database connection for the schema-only command', () => {
+    expect(
+      resolveSelfHostMigrationConfig({
+        DATABASE_URL: 'postgresql://migrator:local-only@localhost/runtime',
+      }),
+    ).toEqual({ databaseUrl: 'postgresql://migrator:local-only@localhost/runtime' });
+  });
+  it.each(['0', '10001', 'NaN', '2.5'])('rejects malformed admission timeout %s', (timeout) => {
+    expect(() =>
+      resolveSelfHostConfig({
+        ...validEnvironment(),
+        NOODLE_OAUTH_ISSUER: 'https://issuer.example',
+        NOODLE_OAUTH_JWKS_URI: 'https://issuer.example/jwks',
+        NOODLE_ADMISSION_URL: 'https://policy.run.app/admit',
+        NOODLE_ADMISSION_TOKEN: ADMIN_TOKEN,
+        NOODLE_ADMISSION_TIMEOUT_MS: timeout,
+      }),
+    ).toThrow('NOODLE_ADMISSION_TIMEOUT_MS');
+  });
+  it.each([
+    'https://other.run.app',
+    'https://policy.example',
+    'http://policy.run.app',
+  ])('rejects audience not bound to the HTTPS Cloud Run origin %s', (audience) => {
+    expect(() =>
+      resolveSelfHostConfig({
+        ...validEnvironment(),
+        NOODLE_OAUTH_ISSUER: 'https://issuer.example',
+        NOODLE_OAUTH_JWKS_URI: 'https://issuer.example/jwks',
+        NOODLE_ADMISSION_URL: 'https://policy.run.app/admit',
+        NOODLE_ADMISSION_TOKEN: ADMIN_TOKEN,
+        NOODLE_ADMISSION_GOOGLE_AUDIENCE: audience,
+      }),
+    ).toThrow('NOODLE_ADMISSION_GOOGLE_AUDIENCE');
   });
 });

@@ -26,10 +26,11 @@ export function createLocalOperationStores(): OperationStores {
 export async function createPostgresOperationStores(
   pool: Pool,
   secretBox: SecretBox,
+  schemaMode: 'initialize' | 'external' = 'initialize',
 ): Promise<OperationStores> {
   const evidence = new PostgresOperationEvidenceStore(pool, secretBox);
-  await evidence.ensureSchema();
+  if (schemaMode === 'initialize') await evidence.ensureSchema();
   const coordination = new PostgresOperationCoordinationStore(pool, secretBox);
-  await coordination.ensureSchema();
+  if (schemaMode === 'initialize') await coordination.ensureSchema();
   return { evidence, coordination };
 }

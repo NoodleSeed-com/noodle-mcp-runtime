@@ -10,7 +10,9 @@ export type {
 export { ensureAuditSchema, insertAuditEvent, PostgresAuditStore } from './postgres-audit.js';
 export { createAuditEventsRoute } from './route.js';
 
-export function createModule(): ServiceModule {
+export function createModule(
+  options: { readonly schemaMode?: 'initialize' | 'external' } = {},
+): ServiceModule {
   return {
     name: '@noodle-borg/module-audit',
     version: '0.0.0',
@@ -21,7 +23,7 @@ export function createModule(): ServiceModule {
         throw new Error('@noodle-borg/module-audit requires a Postgres pool');
       }
       const store = new PostgresAuditStore(pool);
-      await store.ensureSchema();
+      if (options.schemaMode !== 'external') await store.ensureSchema();
       return {
         auditStore: store,
         routes: [createAuditEventsRoute(store)],

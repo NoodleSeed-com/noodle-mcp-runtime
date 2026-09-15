@@ -127,3 +127,22 @@ docker compose ps --all
 Configuration validation happens before the HTTP server starts. Keep `.self-host/.env` out of source control,
 logs, screenshots, tickets, and the combined data archive. Back it up separately as described in
 [backup and restore](backup-and-restore.md).
+
+## TLS-terminating reverse proxy
+
+The self-host runtime accepts `NOODLE_TRUST_PROXY=true` or `false` (default `false`). Enable it only when a
+trusted reverse proxy is the sole ingress and replaces client-supplied `X-Forwarded-Proto` and `Forwarded`
+headers with the actual external protocol. It requires an HTTPS `PUBLIC_BASE_URL`. Missing or plaintext
+forwarded protocol is rejected; token audiences remain bound to the exact public host and MCP path.
+`X-Forwarded-Host` and the `Forwarded` host field do not override the request Host header.
+
+For a separately configured service container behind that proxy:
+
+```dotenv
+PUBLIC_BASE_URL=https://runtime.example.com
+NOODLE_TRUST_PROXY=true
+```
+
+This opt-in configures the service process; the generated loopback Compose topology does not provision a
+reverse proxy or propagate this option. Leave it unset for direct local HTTP. Do not expose the container
+port to untrusted direct clients when proxy trust is enabled.

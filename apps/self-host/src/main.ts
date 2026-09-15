@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
-import { createModule as createAssetStorageModule } from '@noodle-borg/asset-storage';
-import { type RunningService, type ServeServiceOptions, serveService } from '@noodle-borg/service';
+import {
+  createModule as createAssetStorageModule,
+  FilesystemAssetStore,
+  GcsAssetStore,
+} from '@noodle-borg/asset-storage';
+import {
+  migratePostgresSchema,
+  type RunningService,
+  type ServeServiceOptions,
+  serveService,
+} from '@noodle-borg/service';
 import { createLogger, type Logger } from '@noodle-borg/transport-http';
 
 import { SelfHostAdminGate } from './admin-gate.js';
-import { resolveSelfHostConfig } from './config.js';
+import { resolveSelfHostConfig, resolveSelfHostMigrationConfig } from './config.js';
 import { createHttpAdmissionGate } from './http-admission.js';
 import { ownerAuthOptions } from './owner-auth.js';
 
@@ -24,7 +33,12 @@ const defaultDependencies: SelfHostServiceDependencies = {
   serve: serveService,
   logger,
   onSigterm: (handler) => {
-    process.once('SIGTERM', () => void handler().catch(() => undefined));
+    process.once('SIGTERM', () => {
+      const deadline = setTimeout(() => process.exit(1), 8000);
+      void handler()
+        .catch(() => undefined)
+        .finally(() => clearTimeout(deadline));
+    });
   },
   setExitCode: (code) => {
     process.exitCode = code;
@@ -37,6 +51,29 @@ export async function startSelfHostService(
   dependencies: SelfHostServiceDependencies = defaultDependencies,
 ): Promise<SelfHostRunningService> {
   const config = resolveSelfHostConfig(env);
+  const assetOptions: Pick<ServeServiceOptions, 'assetStore' | 'modules'> =
+    config.assetStorage === 'gcs'
+      ? {
+          assetStore: new GcsAssetStore({
+            bucket: config.assetBucket ?? '',
+            keySalt: config.assetIdentitySalt,
+          }),
+        }
+      : config.schemaMode === 'external'
+        ? {
+            assetStore: new FilesystemAssetStore({
+              root: config.assetRoot ?? '',
+              keySalt: config.assetIdentitySalt,
+            }),
+          }
+        : {
+            modules: [
+              createAssetStorageModule({
+                root: config.assetRoot ?? '',
+                salt: config.assetIdentitySalt,
+              }),
+            ],
+          };
   const lifecycleFields = {
     host: config.host,
     port: config.port,
@@ -47,17 +84,14 @@ export async function startSelfHostService(
     host: config.host,
     port: config.port,
     publicBaseUrl: config.publicBaseUrl,
+    ...(config.trustProxy ? { tls: { trustProxy: true, requireHttps: true } } : {}),
     assetPublicBaseUrl: config.publicBaseUrl,
     databaseUrl: config.databaseUrl,
     secretMasterKey: config.secretMasterKey,
-    warmAll: true,
+    warmAll: config.schemaMode !== 'external',
+    ...(config.schemaMode === 'external' ? { schemaMode: 'external' as const } : {}),
     mcpProtocolMode: 'dual',
-    modules: [
-      createAssetStorageModule({
-        root: config.assetRoot,
-        salt: config.assetIdentitySalt,
-      }),
-    ],
+    ...assetOptions,
     deployGate: new SelfHostAdminGate(config.adminToken),
     ...(config.admission === undefined
       ? {}
@@ -84,7 +118,25 @@ export async function startSelfHostService(
 
 const invokedPath = process.argv[1];
 if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
-  startSelfHostService().catch(() => {
+  const command = process.argv[2];
+  const operation =
+    command === 'migrate'
+      ? Promise.resolve()
+          .then(() =>
+            migratePostgresSchema({
+              ...resolveSelfHostMigrationConfig(process.env),
+              ...(process.env.NOODLE_BUILD_SHA === undefined
+                ? {}
+                : { buildId: process.env.NOODLE_BUILD_SHA }),
+            }),
+          )
+          .then((result) => {
+            logger.info('self_host.migrated', result);
+          })
+      : command === undefined
+        ? startSelfHostService()
+        : Promise.reject(new Error('Unknown self-host command'));
+  operation.catch(() => {
     logger.error('self_host.start_failed');
     process.exitCode = 1;
   });

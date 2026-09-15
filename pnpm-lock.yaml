@@ -151,6 +151,12 @@ importers:
       '@types/node':
         specifier: ^24.13.1
         version: 24.13.1
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
+      pg:
+        specifier: ^8.21.0
+        version: 8.21.0
 
 
   packages/assistant:

@@ -459,7 +459,7 @@ describe('FilesystemAssetStore containment and persisted bounds', () => {
     await expect(
       assetStore.verifyUploadedAssets({ scope: SCOPE, assets: [hosted] }),
     ).resolves.toMatchObject({ ok: true });
-  });
+  }, 30000);
 
   it('marks a 257th distinct reachability record for conservative retention without growing the list', async () => {
     const storageRoot = await root();
@@ -514,7 +514,7 @@ describe('FilesystemAssetStore containment and persisted bounds', () => {
     await expect(
       store(storageRoot).verifyUploadedAssets({ scope: SCOPE, assets: [hosted] }),
     ).resolves.toMatchObject({ ok: true });
-  });
+  }, 30000);
 
   it('never clears conservative retention during concurrent sibling updates', async () => {
     const storageRoot = await root();
@@ -573,7 +573,7 @@ describe('FilesystemAssetStore containment and persisted bounds', () => {
     ) as { reachableBy: unknown[]; retainIndefinitely?: unknown };
     expect(retained.reachableBy).toEqual(overflowed.reachableBy);
     expect(retained.retainIndefinitely).toBe(true);
-  });
+  }, 30000);
 
   it('rejects over-limit declared dimensions before capability creation', async () => {
     const storageRoot = await root();

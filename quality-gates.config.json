@@ -46,8 +46,8 @@
       {
         "path": "packages/asset-storage",
         "role": "foundation",
-        "maxSourceLines": 2600,
-        "reason": "Small public filesystem storage boundary; keep the security-sensitive implementation focused."
+        "maxSourceLines": 3000,
+        "reason": "Approved private GCS provider joins filesystem storage under one portable asset contract. This envelope covers immutable envelopes, signed upload capabilities and bounded Google transport while keeping security-sensitive storage in its existing owner."
       },
       {
         "path": "packages/assistant",

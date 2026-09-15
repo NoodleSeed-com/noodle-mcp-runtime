@@ -9,16 +9,17 @@ import type { KnowledgeServiceStores } from './service-wiring.js';
 export async function createPostgresKnowledgeStores(
   pool: Pool,
   secretBox?: StringSecretBox,
+  schemaMode: 'initialize' | 'external' = 'initialize',
 ): Promise<KnowledgeServiceStores> {
   const codec = secretBox === undefined ? undefined : secretBoxDocumentCodec(secretBox);
   const staging = new PostgresKnowledgeStagingStore(pool);
   const revisionStore = new PostgresKnowledgeRevisionStore(pool, codec);
   const budgetStore = new PostgresSearchBudgetStore(pool);
   const crawlState = new PostgresCrawlStateStore(pool);
-  await staging.ensureSchema();
-  await revisionStore.ensureSchema();
-  await budgetStore.ensureSchema();
-  await crawlState.ensureSchema();
+  if (schemaMode === 'initialize') await staging.ensureSchema();
+  if (schemaMode === 'initialize') await revisionStore.ensureSchema();
+  if (schemaMode === 'initialize') await budgetStore.ensureSchema();
+  if (schemaMode === 'initialize') await crawlState.ensureSchema();
   return {
     staging,
     revisionStore,

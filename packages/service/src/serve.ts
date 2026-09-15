@@ -15,7 +15,6 @@ import { createPostgresKnowledgeStores } from '@noodle-borg/knowledge-operations
 import type { IntentEventStore, RequestEventStore } from '@noodle-borg/module';
 import {
   createTelemetryRuntime,
-  ensureIntentCaptureSchema,
   InMemoryIntentCaptureSettingsStore,
   InMemoryIntentEventStore,
   InMemoryRequestEventStore,
@@ -47,6 +46,7 @@ import {
 } from './business-information/postgres.js';
 import { retentionSweepTrigger } from './business-information/retention-sweeper.js';
 import { fenceSourceStore } from './business-information/source-credential-fence.js';
+import { drainSourceIngestion } from './business-information/source-ingestion-coordinator.js';
 import { SecretBoxPayloadCipher } from './business-information-cipher.js';
 import { InMemoryConnectionStore, PostgresConnectionStore } from './connections/store.js';
 import type { ConnectionStore } from './connections/types.js';
@@ -56,18 +56,17 @@ import { createLocalDevtoolsCustomerVerifierFactory } from './customer-verifier.
 import { PostgresGoogleWorkloadIdentityStore } from './google-workload-identity-postgres.js';
 import { InMemoryGoogleWorkloadIdentityStore } from './google-workload-identity-store.js';
 import { createLocalDevtoolsDelegatedCredentialSource } from './local-devtools-delegated-credentials.js';
-import {
-  ensureMcpConfirmationNonceSchema,
-  PostgresMcpConfirmationNonceLedger,
-} from './mcp-confirmation-nonce-postgres.js';
+import { PostgresMcpConfirmationNonceLedger } from './mcp-confirmation-nonce-postgres.js';
 import { createHostedMcpRequestStateManager } from './mcp-protocol-runtime.js';
 import { bootstrapServiceModules } from './modules/bootstrap.js';
 import type { ModuleHost } from './modules/host.js';
 import { resolveServiceOAuthBootstrap } from './oauth/service-bootstrap.js';
 import type { ServiceOptions } from './options.js';
 import { assertPostgresStoreOwnership } from './persistence-options.js';
+import { initializePostgresCoreSchema } from './postgres-schema-startup.js';
 import { resolveRecoveryMode, serveRecoveryQuarantine } from './recovery-quarantine.js';
 import { ServerRegistry } from './registry.js';
+import { assertExternalSchemaProfile, verifyPostgresSchemaContract } from './schema-contract.js';
 import { assistantStoreOptions, createPostgresAssistantStores } from './serve-assistant-stores.js';
 import {
   createLocalOperationStores,
@@ -107,10 +106,15 @@ import { startWelcomeEmailWorker } from './welcome-email.js';
 export type { RunningService } from './serve-options.js';
 
 export async function serveService(options: ServeServiceOptions = {}): Promise<RunningService> {
+  if (options.schemaMode === 'external') assertExternalSchemaProfile(options);
   const recoveryMode = resolveRecoveryMode(options.recoveryMode);
   if (recoveryMode === 'quarantined') return serveRecoveryQuarantine(options);
   if (recoveryMode === 'reopened' && options.operationEvidenceEpoch === undefined)
     throw new Error('Reopened recovery requires an explicit operation evidence epoch');
+  const retentionDays = options.requestEventRetentionDays ?? 30;
+  if (!Number.isInteger(retentionDays) || retentionDays < 1) {
+    throw new Error('requestEventRetentionDays must be a positive integer number of days');
+  }
   const buildInfo = options.buildInfo ?? resolveBuildInfo();
   const serviceConfigSource = resolveServiceConfigSource({
     ...(options.serviceConfigDir !== undefined ? { dir: options.serviceConfigDir } : {}),
@@ -133,9 +137,7 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
   }
   assertPostgresStoreOwnership(options, postgresStoreRequested);
 
-  // Fail closed: any durable store must have a master-key custodian. Existing deploy records may still
-  // contain encrypted legacy secret envelopes, and managed config secrets are encrypted independently.
-  // A host-injected wrapping custodian takes precedence over a static local key.
+  // Durable stores require a master-key custodian; an injected custodian takes precedence.
   let secretBox: SecretBox | undefined;
   let knowledge: ServiceOptions['knowledge'];
   if (durableStoreRequested) {
@@ -245,92 +247,105 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
       pgPool = await createPostgresPool({ databaseUrl });
     }
     const postgresPool = pgPool.pool;
-    await runPostgresSchemaStartupPhase('core', async () => {
-      await ensureMcpConfirmationNonceSchema(postgresPool);
-      mcpConfirmationNonceLedger =
-        mcpConfirmationNonceLedger ?? new PostgresMcpConfirmationNonceLedger(postgresPool);
-      const postgres = new PostgresArtifactStore(postgresPool, {
-        ...(secretBox === undefined ? {} : { secretBox }),
-        deploymentActivation: () => moduleHost?.deploymentActivation ?? [],
-        organizationProvisioning: () => moduleHost?.organizationProvisioning,
-      });
-      const customerAuthAudience = await postgres.ensureSchemaWithCustomerAuthAudienceReport();
-      const { PostgresAppPurgeReconciliationOperator } = await import('@noodle-borg/control-plane');
-      appPurgeReconciliationOperator = new PostgresAppPurgeReconciliationOperator(postgresPool);
-      knowledge = await createPostgresKnowledgeStores(postgresPool, secretBox);
-      warnCustomerAuthAudienceQuarantine(options.logger ?? noopLogger, customerAuthAudience);
-      if (googleWorkloadIdentity === undefined && options.oauth !== undefined) {
-        const identities = new PostgresGoogleWorkloadIdentityStore(postgresPool);
-        await identities.ensureSchema();
-        googleWorkloadIdentity = {
-          issuer: options.oauth.issuer,
-          signer: options.oauth.signer,
-          store: identities,
-        };
-      }
-      store = postgres;
-      controlPlaneStore = controlPlaneStore ?? postgres;
-      configStore = configStore ?? postgres;
-      requestEventStore = requestEventStore ?? new PostgresRequestEventStore(postgresPool);
-      await ensureIntentCaptureSchema(postgresPool);
-      intentCaptureSettingsStore =
-        intentCaptureSettingsStore ?? new PostgresIntentCaptureSettingsStore(postgresPool);
-      intentEventStore = intentEventStore ?? new PostgresIntentEventStore(postgresPool);
-      alertRuleStore = alertRuleStore ?? new PostgresAlertRuleStore(postgresPool);
-      if (businessInformationEnabled && businessInformationStore === undefined) {
-        if (secretBox === undefined) {
-          throw new Error('Postgres business information requires the service key custodian');
+    try {
+      await runPostgresSchemaStartupPhase('core', async () => {
+        if (options.schemaMode === 'external') {
+          await verifyPostgresSchemaContract(postgresPool);
+        } else {
+          const report = await initializePostgresCoreSchema(postgresPool, options, secretBox);
+          warnCustomerAuthAudienceQuarantine(options.logger ?? noopLogger, report);
         }
-        const payloadCipher = new SecretBoxPayloadCipher(secretBox);
-        const postgresBusinessInformation = new PostgresBusinessInformationStore(
-          postgresPool,
-          payloadCipher,
-          options.clock === undefined ? {} : { now: options.clock },
-        );
-        await postgresBusinessInformation.ensureSchema();
-        businessInformationStore = postgresBusinessInformation;
-        const sourceIdentityKey =
-          options.businessInformationSourceIdentityKey ?? options.secretMasterKey;
-        if (businessInformationSourceStore === undefined && sourceIdentityKey !== undefined) {
-          const postgresSources = new PostgresSourceIngestionStore(postgresPool, payloadCipher, {
-            identityKey: sourceIdentityKey,
-          });
-          await postgresSources.ensureSchema();
-          businessInformationSourceStore = postgresSources;
-        }
-      }
-      if (businessInformationEnabled) {
-        if (!secretBox) throw new Error('Operation evidence requires encrypted storage');
-        operationStores = await createPostgresOperationStores(postgresPool, secretBox);
-      }
-      if (options.applicationConnections) {
-        if (!secretBox) throw new Error('Connections require encrypted storage');
-        const connections = new PostgresConnectionStore(postgresPool, secretBox);
-        await connections.ensureSchema();
-        connectionStore = connections;
-      }
-      const assistantStores = await createPostgresAssistantStores(postgresPool, {
-        assistantStore,
-        assistantAppearance,
-        publicEmbeds,
-        admissionCounters,
-        elevations,
-      });
-      assistantStore = assistantStores.assistantStore;
-      assistantAppearance = assistantStores.assistantAppearance;
-      publicEmbeds = assistantStores.publicEmbeds;
-      admissionCounters = assistantStores.admissionCounters;
-      elevations = assistantStores.elevations;
-      if (
-        elevationCoordinator === undefined &&
-        options.assistantStore === undefined &&
-        options.elevations === undefined
-      ) {
-        elevationCoordinator = new PostgresAssistantElevationCoordinator(postgresPool, {
-          ...(options.clock === undefined ? {} : { now: options.clock }),
+        mcpConfirmationNonceLedger =
+          mcpConfirmationNonceLedger ?? new PostgresMcpConfirmationNonceLedger(postgresPool);
+        const postgres = new PostgresArtifactStore(postgresPool, {
+          ...(secretBox === undefined ? {} : { secretBox }),
+          deploymentActivation: () => moduleHost?.deploymentActivation ?? [],
+          organizationProvisioning: () => moduleHost?.organizationProvisioning,
         });
-      }
-    });
+        const { PostgresAppPurgeReconciliationOperator } = await import(
+          '@noodle-borg/control-plane'
+        );
+        appPurgeReconciliationOperator = new PostgresAppPurgeReconciliationOperator(postgresPool);
+        knowledge = await createPostgresKnowledgeStores(postgresPool, secretBox, 'external');
+        if (googleWorkloadIdentity === undefined && options.oauth !== undefined) {
+          const identities = new PostgresGoogleWorkloadIdentityStore(postgresPool);
+          googleWorkloadIdentity = {
+            issuer: options.oauth.issuer,
+            signer: options.oauth.signer,
+            store: identities,
+          };
+        }
+        store = postgres;
+        controlPlaneStore = controlPlaneStore ?? postgres;
+        configStore = configStore ?? postgres;
+        requestEventStore = requestEventStore ?? new PostgresRequestEventStore(postgresPool);
+        intentCaptureSettingsStore =
+          intentCaptureSettingsStore ?? new PostgresIntentCaptureSettingsStore(postgresPool);
+        intentEventStore = intentEventStore ?? new PostgresIntentEventStore(postgresPool);
+        alertRuleStore = alertRuleStore ?? new PostgresAlertRuleStore(postgresPool);
+        if (businessInformationEnabled && businessInformationStore === undefined) {
+          if (secretBox === undefined) {
+            throw new Error('Postgres business information requires the service key custodian');
+          }
+          const payloadCipher = new SecretBoxPayloadCipher(secretBox);
+          const postgresBusinessInformation = new PostgresBusinessInformationStore(
+            postgresPool,
+            payloadCipher,
+            options.clock === undefined ? {} : { now: options.clock },
+          );
+          businessInformationStore = postgresBusinessInformation;
+          const sourceIdentityKey =
+            options.businessInformationSourceIdentityKey ?? options.secretMasterKey;
+          if (businessInformationSourceStore === undefined && sourceIdentityKey !== undefined) {
+            const postgresSources = new PostgresSourceIngestionStore(postgresPool, payloadCipher, {
+              identityKey: sourceIdentityKey,
+            });
+            businessInformationSourceStore = postgresSources;
+          }
+        }
+        if (businessInformationEnabled) {
+          if (!secretBox) throw new Error('Operation evidence requires encrypted storage');
+          operationStores = await createPostgresOperationStores(
+            postgresPool,
+            secretBox,
+            'external',
+          );
+        }
+        if (options.applicationConnections) {
+          if (!secretBox) throw new Error('Connections require encrypted storage');
+          const connections = new PostgresConnectionStore(postgresPool, secretBox);
+          connectionStore = connections;
+        }
+        const assistantStores = await createPostgresAssistantStores(
+          postgresPool,
+          {
+            assistantStore,
+            assistantAppearance,
+            publicEmbeds,
+            admissionCounters,
+            elevations,
+          },
+          'external',
+        );
+        assistantStore = assistantStores.assistantStore;
+        assistantAppearance = assistantStores.assistantAppearance;
+        publicEmbeds = assistantStores.publicEmbeds;
+        admissionCounters = assistantStores.admissionCounters;
+        elevations = assistantStores.elevations;
+        if (
+          elevationCoordinator === undefined &&
+          options.assistantStore === undefined &&
+          options.elevations === undefined
+        ) {
+          elevationCoordinator = new PostgresAssistantElevationCoordinator(postgresPool, {
+            ...(options.clock === undefined ? {} : { now: options.clock }),
+          });
+        }
+      });
+    } catch (error) {
+      await pgPool.close();
+      throw error;
+    }
   } else if (options.dataDir !== undefined) {
     store = new JsonFileArtifactStore(options.dataDir);
     alertRuleStore = alertRuleStore ?? new JsonFileAlertRuleStore(options.dataDir);
@@ -360,24 +375,13 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
     });
   }
 
-  // Analytics write-behind buffer + Stage-A default retention (ADR 0121): capture is enqueue-only on the
-  // request path; the durable stream is pruned on boot and periodically to the retention window.
-  // The retention override fails closed at boot (mirroring resolveArchiveRetentionDays): a negative or
-  // fractional value would flip the prune cutoff into the future and delete the entire stream.
-  const retentionDays = options.requestEventRetentionDays ?? 30;
-  if (!Number.isInteger(retentionDays) || retentionDays < 1) {
-    throw new Error('requestEventRetentionDays must be a positive integer number of days');
-  }
-  // The runtime owns its buffers/timers lifecycle and, when a logger is present, the periodic
-  // `telemetry.health` pipeline-health heartbeat (#1309).
+  // Owned telemetry buffers and timers drain through closeResources.
   const telemetry = createTelemetryRuntime(requestEventStore, intentEventStore, retentionDays, {
     ...(options.logger === undefined ? {} : { heartbeatLogger: options.logger }),
   });
   const { requestEventBuffer, intentEventBuffer } = telemetry;
 
-  // Analytics alerting evaluator (E2, ADR 0130): a periodic edge-triggered sweep over enabled
-  // alert rules with single-attempt SSRF-guarded webhook delivery. The interval timer mirrors the
-  // retention prune above; `maybeSweep` throttles internally, so a boot sweep is safe here too.
+  // Periodic edge-triggered alert delivery owns one timer.
   const alertEvaluator = new AlertEvaluator({
     alertRules: alertRuleStore,
     requestEvents: requestEventStore,
@@ -442,25 +446,38 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
       ...(options.clock !== undefined ? { clock: options.clock } : {}),
     });
   }
-  // The public runtime owns only the deterministic local/self-host fallback. Durable hosts must inject
-  // a provider or load one through the module seam; they never fall back to process-local asset state.
+  // Durable hosts must supply an asset adapter; only local operation has an in-memory fallback.
   const assetStore: AssetStore | undefined =
     options.assetStore ?? (durableStoreRequested ? undefined : new InMemoryAssetStore());
   const assetPublicBaseUrl = options.assetPublicBaseUrl;
 
-  const bootedModules = await runPostgresSchemaStartupPhase('modules', () =>
-    bootstrapServiceModules({
-      inputs: options.modules,
-      allowlist: options.moduleAllowlist,
-      importer: options.moduleImporter,
-      logger: options.logger ?? noopLogger,
-      postgresPool: pgPool?.pool,
-      audit: auditStore,
-      ...(options.clock === undefined ? {} : { clock: options.clock }),
-    }),
-  );
-  moduleHost = bootedModules.host;
+  let cleanup: Promise<void> | undefined;
+  const closeResources = (): Promise<void> =>
+    (cleanup ??= closeServiceResources({
+      telemetry,
+      ...(welcomeEmailTimer === undefined ? {} : { welcomeEmailTimer }),
+      ...(businessInformationTimer === undefined ? {} : { businessInformationTimer }),
+      ...(stopBusinessInformationSweep === undefined ? {} : { stopBusinessInformationSweep }),
+      ...(businessInformationSourceTimer === undefined ? {} : { businessInformationSourceTimer }),
+      alertTimer,
+      ...(moduleHost === undefined ? {} : { moduleHost }),
+      ...(pgPool === undefined ? {} : { postgresPool: pgPool }),
+    }));
   try {
+    const bootedModules = await runPostgresSchemaStartupPhase('modules', () =>
+      bootstrapServiceModules({
+        inputs: options.modules,
+        allowlist: options.moduleAllowlist,
+        importer: options.moduleImporter,
+        logger: options.logger ?? noopLogger,
+        postgresPool: pgPool?.pool,
+        audit: auditStore,
+        ...(options.schemaMode === undefined ? {} : { schemaMode: options.schemaMode }),
+        ...(options.clock === undefined ? {} : { clock: options.clock }),
+      }),
+    );
+    const activeModuleHost = bootedModules.host;
+    moduleHost = activeModuleHost;
     const loadedModules = bootedModules.loaded;
 
     for (const domain of options.signupAllowedDomains ?? []) {
@@ -476,17 +493,17 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
     const oauthBootstrap = await runPostgresSchemaStartupPhase('oauth', () =>
       resolveServiceOAuthBootstrap({
         options:
-          moduleHost.authVerifier === undefined
+          activeModuleHost.authVerifier === undefined
             ? options
-            : { ...options, verifyOwnerToken: moduleHost.authVerifier },
+            : { ...options, verifyOwnerToken: activeModuleHost.authVerifier },
         ...(pgPool === undefined ? {} : { pool: pgPool.pool }),
         ...(secretBox === undefined ? {} : { secretBox }),
         controlPlaneStore: oauthControlPlaneStore,
-        ...(moduleHost.platformHumanIdentity === undefined
+        ...(activeModuleHost.platformHumanIdentity === undefined
           ? {}
-          : { platformHumanIdentity: moduleHost.platformHumanIdentity }),
+          : { platformHumanIdentity: activeModuleHost.platformHumanIdentity }),
         registry: () => registry,
-        audit: moduleHost.audit,
+        audit: activeModuleHost.audit,
         // The control-plane exchange's issuer-liveness check: the elevating assistant client must be
         // a live client of the asserted tenant, so revoking it kills the whole exchange path.
         listAssistantClientIds: async (tenant) => {
@@ -537,9 +554,11 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
         ...(resolvedAuthServerIssuer === undefined
           ? {}
           : { authServerIssuer: resolvedAuthServerIssuer }),
-        ...(moduleHost.platformHumanIdentity?.principalResolver === undefined
+        ...(activeModuleHost.platformHumanIdentity?.principalResolver === undefined
           ? {}
-          : { platformPrincipalResolver: moduleHost.platformHumanIdentity.principalResolver }),
+          : {
+              platformPrincipalResolver: activeModuleHost.platformHumanIdentity.principalResolver,
+            }),
       });
     }
 
@@ -559,7 +578,7 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
       options.applicationConnections && businessInformationStore
         ? createApplicationConnections({
             ...options.applicationConnections,
-            audit: moduleHost.audit,
+            audit: activeModuleHost.audit,
             store: connectionStore ?? new InMemoryConnectionStore(),
             installations: businessInformationStore,
             getRegistry: () => {
@@ -684,17 +703,6 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
           }
         }
       : async () => true;
-    const closeResources = (): Promise<void> =>
-      closeServiceResources({
-        telemetry,
-        ...(welcomeEmailTimer === undefined ? {} : { welcomeEmailTimer }),
-        ...(businessInformationTimer === undefined ? {} : { businessInformationTimer }),
-        ...(stopBusinessInformationSweep === undefined ? {} : { stopBusinessInformationSweep }),
-        ...(businessInformationSourceTimer === undefined ? {} : { businessInformationSourceTimer }),
-        alertTimer,
-        ...(moduleHost === undefined ? {} : { moduleHost }),
-        ...(pgPool === undefined ? {} : { postgresPool: pgPool }),
-      });
     const {
       appPurgeReconciliationOperator: ignoredDirectReconciliationOperator,
       ...handlerBaseOptions
@@ -780,14 +788,7 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
       throw error;
     }
   } catch (error) {
-    await moduleHost.dispose();
+    await closeResources();
     throw error;
-  }
-}
-
-async function drainSourceIngestion(coordinator: SourceIngestionCoordinator): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const result = await coordinator.runOne();
-    if (result.disposition !== 'completed') return;
   }
 }

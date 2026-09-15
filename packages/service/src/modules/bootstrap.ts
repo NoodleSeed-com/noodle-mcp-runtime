@@ -9,6 +9,7 @@ import type { Logger } from '@noodle-borg/transport-http';
 import { ModuleHost } from './host.js';
 
 export interface ServiceModuleBootstrapOptions {
+  readonly schemaMode?: 'initialize' | 'external';
   readonly inputs: readonly ModuleInput[] | undefined;
   readonly allowlist: readonly string[] | undefined;
   readonly importer: ModuleImporter | undefined;
@@ -25,7 +26,10 @@ export async function bootstrapServiceModules(options: ServiceModuleBootstrapOpt
   let inputs = options.inputs;
   if (options.postgresPool !== undefined) {
     const { createModule: createAuditModule } = await import('@noodle-borg/module-audit');
-    inputs = [createAuditModule(), ...(inputs ?? [])];
+    inputs = [
+      createAuditModule(options.schemaMode === undefined ? {} : { schemaMode: options.schemaMode }),
+      ...(inputs ?? []),
+    ];
   }
   const loaded = await loadModules(
     inputs,

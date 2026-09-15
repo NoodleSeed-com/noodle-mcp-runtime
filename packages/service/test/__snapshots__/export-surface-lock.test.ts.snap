@@ -93,6 +93,7 @@ exports[`service export surface lock > exports exactly this set of names 1`] = `
   "ORG_DOMAIN_TXT_LABEL",
   "OrgBillingResponseSchema",
   "OrgSummarySchema",
+  "POSTGRES_SCHEMA_CONTRACT",
   "POST_SEAL_ENFORCEMENT_PROFILE",
   "PlatformAccountResetBlockerCodeSchema",
   "PlatformAccountResetExecuteRequestSchema",
@@ -182,6 +183,7 @@ exports[`service export surface lock > exports exactly this set of names 1`] = `
   "ensureServicePrincipalSchema",
   "expandServiceProfile",
   "handleDeveloperMcpRequest",
+  "migratePostgresSchema",
   "normalizeActivationServiceUrl",
   "normalizeBillingMigrationServiceUrl",
   "observedMetricValue",
@@ -226,4 +228,4 @@ exports[`service export surface lock > exports exactly this set of names 1`] = `
 ]
 `;
 
-exports[`service export surface lock > reports the surface size so a bulk loss is visible in the diff 1`] = `221`;
+exports[`service export surface lock > reports the surface size so a bulk loss is visible in the diff 1`] = `223`;

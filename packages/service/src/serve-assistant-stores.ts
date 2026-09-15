@@ -42,17 +42,18 @@ export interface AssistantStoreSet {
 export async function createPostgresAssistantStores(
   pool: Pool,
   supplied: SuppliedAssistantStores,
+  schemaMode: 'initialize' | 'external' = 'initialize',
 ): Promise<AssistantStoreSet> {
   let assistantStore = supplied.assistantStore;
   if (assistantStore === undefined) {
     const postgres = new PostgresAssistantStore(pool);
-    await postgres.ensureSchema();
+    if (schemaMode === 'initialize') await postgres.ensureSchema();
     assistantStore = postgres;
   }
   let assistantAppearance = supplied.assistantAppearance;
   if (assistantAppearance === undefined) {
     const postgres = new PostgresAssistantAppearanceSettingsStore(pool);
-    await postgres.ensureSchema();
+    if (schemaMode === 'initialize') await postgres.ensureSchema();
     assistantAppearance = postgres;
   }
   // Public surfaces are only served where their state is durable: a spend ceiling that resets on restart
@@ -61,13 +62,13 @@ export async function createPostgresAssistantStores(
   let publicEmbeds = supplied.publicEmbeds;
   if (publicEmbeds === undefined) {
     const postgres = new PostgresPublicEmbedStore(pool);
-    await postgres.ensureSchema();
+    if (schemaMode === 'initialize') await postgres.ensureSchema();
     publicEmbeds = postgres;
   }
   let admissionCounters = supplied.admissionCounters;
   if (admissionCounters === undefined) {
     const postgres = new PostgresDailyCounterStore(pool);
-    await postgres.ensureSchema();
+    if (schemaMode === 'initialize') await postgres.ensureSchema();
     admissionCounters = postgres;
   }
   // Without an elevation store, a mixed surface never offers mid-conversation sign-in and a spent
@@ -76,7 +77,7 @@ export async function createPostgresAssistantStores(
   let elevations = supplied.elevations;
   if (elevations === undefined) {
     const postgres = new PostgresAssistantElevationStore(pool);
-    await postgres.ensureSchema();
+    if (schemaMode === 'initialize') await postgres.ensureSchema();
     elevations = postgres;
   }
   return { assistantStore, assistantAppearance, publicEmbeds, admissionCounters, elevations };
