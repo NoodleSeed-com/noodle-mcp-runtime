@@ -1,0 +1,102 @@
+name: Core dev deployment
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-dev
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node --test infra/cloudrun/*.test.mjs
+      - run: pnpm verify
+
+  deploy:
+    needs: checks
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment:
+      name: core-dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.GCP_ARTIFACT_REGISTRY_REPOSITORY }}
+      GCP_CLOUD_BUILD_SOURCE_BUCKET: ${{ vars.GCP_CLOUD_BUILD_SOURCE_BUCKET }}
+      GCP_CLOUD_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
+      GCP_RUNTIME_SERVICE: ${{ vars.GCP_RUNTIME_SERVICE }}
+      GCP_RUNTIME_MIGRATION_JOB: ${{ vars.GCP_RUNTIME_MIGRATION_JOB }}
+      GCP_SQL_INSTANCE_CONNECTION_NAME: ${{ vars.GCP_SQL_INSTANCE_CONNECTION_NAME }}
+      GCP_RUNTIME_APPLICATION_URL_SECRET: ${{ vars.GCP_RUNTIME_APPLICATION_URL_SECRET }}
+      GCP_RUNTIME_APPLICATION_DB_ROLE: ${{ vars.GCP_RUNTIME_APPLICATION_DB_ROLE }}
+      GCP_NODE_BUILD_IMAGE: ${{ vars.GCP_NODE_BUILD_IMAGE }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Require provisioned dev federation
+        env:
+          PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: test -n "$PROVIDER" && test -n "$ACCOUNT"
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Build, migrate, verify and deploy this source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          proxy=cloud-sql-proxy
+          curl --fail --silent --show-error --location \
+            https://github.com/GoogleCloudPlatform/cloud-sql-proxy/releases/download/v2.23.0/cloud-sql-proxy.linux.amd64 \
+            --output "$proxy"
+          echo 'cd689d582b826fa5bc82c01ccc14e45a58200c3cefbf923ce96c422825e4e6f6  cloud-sql-proxy' | sha256sum --check
+          chmod 0700 "$proxy"
+          ./cloud-sql-proxy --address 127.0.0.1 --port 55433 \
+            "$GCP_SQL_INSTANCE_CONNECTION_NAME" >/tmp/core-cloud-sql-proxy.log 2>&1 &
+          proxy_pid=$!
+          trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            nc -z 127.0.0.1 55433 && break
+            if [[ "$attempt" == 30 ]]; then echo 'Cloud SQL Auth Proxy did not become ready'; exit 1; fi
+            sleep 1
+          done
+          node infra/cloudrun/dev-deploy.mjs
+      - name: Retain deployment evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-dev-deployment-${{ github.sha }}
+          path: .superpowers/sdd/core-dev/*.json
+          if-no-files-found: ignore
+          retention-days: 14
