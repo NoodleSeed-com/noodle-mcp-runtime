@@ -124,7 +124,7 @@ export async function claimAssistantExecution(
         req,
         res,
         deps.admissionGate,
-        session,
+        { ...session, registry: deps.registry },
         {
           method: 'assistant/turns',
           category: 'execute',

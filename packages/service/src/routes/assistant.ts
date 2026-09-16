@@ -235,6 +235,7 @@ export async function handleAssistantSession(
     return sendJson(res, 409, { error: 'assistant deployment is unavailable' });
   const session = await deps.store.createSession(prepared.record);
   const sessionBody = {
+    ...(deps.requireAssistantExecutionAdmission ? { executionAdmission: 'required' as const } : {}),
     token: session.token,
     sessionId: session.session.id,
     target: receipt,
@@ -521,7 +522,16 @@ export async function handleAssistantAppRequest(
     return sendJson(res, 400, { error: 'invalid MCP App request' });
   }
   const operation = assistantAppAdmissionOperation(body.value.method, body.value.params);
-  if (!(await admitAssistantRequest(req, res, deps.admissionGate, session, operation))) return;
+  if (
+    !(await admitAssistantRequest(
+      req,
+      res,
+      deps.admissionGate,
+      { ...session, registry: deps.registry },
+      operation,
+    ))
+  )
+    return;
   const target = await sessionScopedTarget(deps.registry, session, deps.resolveRuntimeTarget, req);
   if (!target) return sendJson(res, 409, { error: 'assistant deployment is unavailable' });
   const method = body.value.method;

@@ -8,7 +8,7 @@ import {
   InMemoryPublicEmbedStore,
 } from '@noodle-borg/assistant-gateway';
 import type { RuntimeArtifact } from '@noodle-borg/compiler';
-import type { RequestEventInput } from '@noodle-borg/module';
+import type { AdmissionGate, RequestEventInput } from '@noodle-borg/module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AssistantRouteDeps } from '../src/routes/assistant.js';
 import { handlePublicAssistantSession } from '../src/routes/assistant-public-session.js';
@@ -68,6 +68,8 @@ describe('public assistant mint route', () => {
   async function start(
     overrides: {
       readonly envelope?: AssistantRouteDeps['admissionEnvelope'];
+      readonly admissionGate?: AdmissionGate;
+      readonly required?: boolean;
       readonly counters?: AssistantRouteDeps['admissionCounters'];
       readonly enabled?: boolean;
       readonly artifact?: RuntimeArtifact;
@@ -90,17 +92,22 @@ describe('public assistant mint route', () => {
     const modelFetch = vi.fn();
     const usageEvents: RequestEventInput[] = [];
     let serviceBase = '';
+    let deploymentId = 'dep_1';
     const enabled = overrides.enabled !== false;
     const deps = {
       store,
       appearance,
+      admissionGate: overrides.admissionGate,
+      requireAssistantExecutionAdmission: overrides.required,
       ...(enabled ? { publicEmbeds: embeds } : {}),
       ...(enabled ? { admissionCounters: overrides.counters ?? new DurableCounters() } : {}),
       ...(overrides.envelope ? { admissionEnvelope: overrides.envelope } : {}),
       registry: {
+        listDeployments: () =>
+          Promise.resolve([{ deploymentId: 'dep_1', serverVersion: '7', accessMode: 'public' }]),
         getActiveByTenant: () =>
           Promise.resolve({
-            deploymentId: 'dep_1',
+            deploymentId,
             served: { artifact: overrides.artifact ?? ARTIFACT, deps: {} },
           }),
       },
@@ -120,7 +127,17 @@ describe('public assistant mint route', () => {
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     serviceBase = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    return { base: serviceBase, embed, store, modelFetch, appearance, usageEvents };
+    return {
+      base: serviceBase,
+      embed,
+      store,
+      modelFetch,
+      appearance,
+      usageEvents,
+      moveDeployment: () => {
+        deploymentId = 'dep_2';
+      },
+    };
   }
 
   // `null` means "send no Origin header at all" — distinct from omitting the argument, which defaults
@@ -134,6 +151,90 @@ describe('public assistant mint route', () => {
       },
       body: JSON.stringify(body),
     });
+
+  it('denies an unpublished public mint before consuming capacity or creating a session', async () => {
+    const counters = new DurableCounters();
+    const app = await start({
+      counters,
+      admissionGate: async () => ({ allow: false, reason: 'not_published' }),
+    });
+    const response = await mint(app.base, { embedId: app.embed.embedId });
+    expect(response.status).toBe(403);
+    expect(await counters.peek(`mints:${app.embed.embedId}`, NOW)).toBe(0);
+    expect(app.usageEvents).toHaveLength(0);
+    expect(app.modelFetch).not.toHaveBeenCalled();
+  });
+
+  it('uses authoritative public mint provenance and advertises required execution', async () => {
+    const seen: unknown[] = [];
+    const app = await start({
+      required: true,
+      admissionGate: async (context) => {
+        seen.push(context);
+        return { allow: true };
+      },
+    });
+    const response = await mint(app.base, {
+      embedId: app.embed.embedId,
+      org: 'forged',
+      subject: 'owner',
+      serverVersion: '999',
+      assistantSurface: { kind: 'public', origin: 'https://forged.test', publicEmbedId: 'forged' },
+    });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ executionAdmission: 'required' });
+    expect(seen).toEqual([
+      expect.objectContaining({
+        ...TENANT,
+        deploymentId: 'dep_1',
+        serverVersion: '7',
+        accessMode: 'public',
+        method: 'assistant/public-sessions',
+        category: 'protocol',
+        assistantSurface: { kind: 'public', origin: ORIGIN, publicEmbedId: app.embed.embedId },
+      }),
+    ]);
+    expect(seen[0]).not.toHaveProperty('subject');
+    expect(seen[0]).not.toHaveProperty('assistantExecution');
+  });
+
+  it('fails closed when public admission is unavailable', async () => {
+    const app = await start({
+      admissionGate: async () => {
+        throw new Error('private failure');
+      },
+    });
+    const response = await mint(app.base, { embedId: app.embed.embedId });
+    expect(response.status).toBe(403);
+    expect(await response.text()).not.toContain('private failure');
+  });
+
+  it('does not mint against a deployment changed while external admission was pending', async () => {
+    const counters = new DurableCounters();
+    const app = await start({
+      counters,
+      admissionGate: async () => {
+        app.moveDeployment();
+        return { allow: true };
+      },
+    });
+    const response = await mint(app.base, { embedId: app.embed.embedId });
+    expect(response.status).toBe(409);
+    expect(await counters.peek(`mints:${app.embed.embedId}`, NOW)).toBe(0);
+  });
+
+  it('does not forward a disallowed origin to external admission', async () => {
+    let admissions = 0;
+    const app = await start({
+      admissionGate: async () => {
+        admissions++;
+        return { allow: true };
+      },
+    });
+    const response = await mint(app.base, { embedId: app.embed.embedId }, 'https://wrong.test');
+    expect(response.status).toBe(403);
+    expect(admissions).toBe(0);
+  });
 
   it('mints an anonymous session for a page on the live surface', async () => {
     const { base, embed, store, usageEvents } = await start();

@@ -3,11 +3,15 @@ import type { AssistantSessionRecord } from '@noodle-borg/assistant-gateway/port
 import type { AdmissionCategory, AdmissionContext, AdmissionGate } from '@noodle-borg/module';
 import { type AssistantExecutionPolicy, parseAssistantExecutionPolicy } from '@noodle-borg/module';
 import { sendJson } from '@noodle-borg/transport-http';
+import type { ServerRegistry } from './registry.js';
 
 type AssistantAdmissionIdentity = Pick<
   AssistantSessionRecord,
   'tenant' | 'deploymentId' | 'caller'
->;
+> &
+  Partial<Pick<AssistantSessionRecord, 'publicEmbedId' | 'boundSurface' | 'origin'>> & {
+    readonly registry?: Pick<ServerRegistry, 'listDeployments' | 'get'>;
+  };
 type AssistantAdmissionOperation = Pick<
   AdmissionContext,
   'method' | 'category' | 'name' | 'serverVersion' | 'assistantExecution'
@@ -24,16 +28,38 @@ export async function admitAssistantRequest(
 ): Promise<boolean> {
   if (gate === undefined && executionPolicy === undefined) return true;
   const routeId = new URL(req.url ?? '/', 'http://assistant.invalid').pathname;
-  const context: AdmissionContext = {
+  let context: AdmissionContext = {
     routeId,
     ...identity.tenant,
     ...(identity.caller.identityKind === 'anonymous' ? {} : { subject: identity.caller.subject }),
     deploymentId: identity.deploymentId,
+    ...(identity.publicEmbedId !== undefined &&
+    identity.boundSurface === 'public' &&
+    identity.origin !== undefined
+      ? {
+          assistantSurface: {
+            kind: 'public' as const,
+            origin: identity.origin,
+            publicEmbedId: identity.publicEmbedId,
+          },
+        }
+      : {}),
     ...(operation ?? sessionOperation(routeId)),
     ...(req.socket.remoteAddress === undefined ? {} : { remoteAddress: req.socket.remoteAddress }),
   };
   let status: 403 | 429 = 403;
   try {
+    if (context.assistantSurface !== undefined) {
+      const record = (await identity.registry?.listDeployments(identity.tenant))?.find(
+        (candidate) => candidate.deploymentId === identity.deploymentId,
+      );
+      if (!record) throw new Error('public deployment unavailable');
+      const serverVersion =
+        record.serverVersion ??
+        (await identity.registry?.get(record.deploymentId))?.served.artifact.server.version;
+      if (!serverVersion) throw new Error('public deployment version unavailable');
+      context = { ...context, serverVersion, accessMode: record.accessMode ?? 'owner-only' };
+    }
     const decision = await gate?.(context);
     if (decision?.allow === true) {
       const policy =

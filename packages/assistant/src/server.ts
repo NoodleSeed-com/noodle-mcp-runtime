@@ -90,6 +90,8 @@ export interface AssistantSessionTarget {
 }
 
 export interface AssistantSession {
+  /** Server requires a durable operation and policy before each message turn. */
+  readonly executionAdmission?: 'required';
   readonly sessionId?: string;
   readonly target?: AssistantSessionTarget;
   readonly token: string;

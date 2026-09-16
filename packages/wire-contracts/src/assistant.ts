@@ -31,6 +31,7 @@ const assistantSessionConfigurationSchema = z.object({
 });
 
 export const assistantSessionResponseSchema = z.object({
+  executionAdmission: z.literal('required').optional(),
   token: z.string().min(1),
   /** Server-owned receipt on fresh private sessions; absent on legacy/elevation responses. */
   sessionId: z.string().min(1).optional(),

@@ -15,6 +15,7 @@ import {
   refusalCode,
   UNRETRYABLE_SERVICE_CODES,
 } from './client-errors.js';
+import { AssistantTurnTransport } from './client-operations.js';
 import {
   appInteractionStopped,
   appToolResult,
@@ -97,6 +98,7 @@ class DefaultAssistantClient<TPageContext extends AssistantPageContext>
   implements AssistantClient<TPageContext>
 {
   readonly #source: AssistantSessionSource;
+  readonly #turnTransport: AssistantTurnTransport;
   readonly #fetch: typeof fetch;
   readonly #listeners = new Set<(event: AssistantClientEvent) => void>();
   readonly #chat = new AssistantChatStateStore();
@@ -116,6 +118,7 @@ class DefaultAssistantClient<TPageContext extends AssistantPageContext>
 
   constructor(options: CreateAssistantClientOptions<TPageContext>) {
     this.#source = resolveSessionSource(options);
+    this.#turnTransport = new AssistantTurnTransport((...args) => this.#request(...args));
     // Some browsers require `window.fetch` to be invoked with its global receiver. Keep the default
     // behind a closure instead of storing the unbound host method; injected test/server fetches remain exact.
     this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -498,6 +501,7 @@ class DefaultAssistantClient<TPageContext extends AssistantPageContext>
   }
 
   resetSession(): void {
+    this.#turnTransport.reset();
     this.#cancelInitialSuggestions();
     this.#rejectPendingAppInteractions(
       clientError('confirmation_expired', 'assistant session is not active', false),
@@ -521,23 +525,18 @@ class DefaultAssistantClient<TPageContext extends AssistantPageContext>
     if (mayRetry) this.#emit({ event: 'message_started', data: { message } });
     const clientContext = this.#resolveClientContext();
     const pageContext = this.#resolvePageContext();
-    const response = await this.#request(
-      session.endpoints.turns,
+    const response = await this.#turnTransport.send(
+      session,
       {
-        method: 'POST',
-        headers: authorizedHeaders(session.token, 'text/event-stream'),
-        body: JSON.stringify({
-          message,
-          ...(clientContext ? { clientContext } : {}),
-          ...(pageContext === undefined ? {} : { pageContext }),
-          ...(modelContext ? { modelContext } : {}),
-          ...(session.endpoints.suggestions ? { suggestions: true } : {}),
-        }),
-        signal,
+        message,
+        ...(clientContext ? { clientContext } : {}),
+        ...(pageContext === undefined ? {} : { pageContext }),
+        ...(modelContext ? { modelContext } : {}),
+        ...(session.endpoints.suggestions ? { suggestions: true } : {}),
       },
-      'turn_failed',
+      signal,
     );
-    if (response.status === 401 && mayRetry) {
+    if (response.status === 401 && mayRetry && session.executionAdmission !== 'required') {
       this.#session = undefined;
       this.#emit({ event: 'session_expired', data: {} });
       await this.#sendTurn(message, false, signal, modelContext);
@@ -555,6 +554,7 @@ class DefaultAssistantClient<TPageContext extends AssistantPageContext>
       );
     }
     await this.#consume(response);
+    this.#turnTransport.complete();
     this.#emit({ event: 'message_completed', data: {} });
   }
 

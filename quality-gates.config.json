@@ -82,13 +82,13 @@
       {
         "path": "packages/service",
         "role": "composition",
-        "maxSourceLines": 65126,
-        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition.",
+        "maxSourceLines": 65243,
+        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition. Public embed slice (2026-09-16): exact 117-line increase for trusted public session admission, deployment provenance and execution capability.",
         "modules": [
           {
             "path": "src/routes",
-            "maxSourceLines": 14835,
-            "reason": "Public HTTP transport and portable operator API routes. Founder-approved MVP allowance under ADR 0233. Requester-approved deployment and version deletion API adapter allowance (2026-09-14). Requester-approved (2026-09-15): authenticated preparation/status and once-only model execution HTTP routes."
+            "maxSourceLines": 14926,
+            "reason": "Public HTTP transport and portable operator API routes. Founder-approved MVP allowance under ADR 0233. Requester-approved deployment and version deletion API adapter allowance (2026-09-14). Requester-approved (2026-09-15): authenticated preparation/status and once-only model execution HTTP routes. Public embed slice (2026-09-16): exact 91-line route increase for pre-mint policy admission and required execution session replies."
           },
           {
             "path": "src/oauth",

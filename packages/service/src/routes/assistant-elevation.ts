@@ -147,6 +147,7 @@ export async function elevateAssistantSession(
     readonly store: { elevateSession: AssistantStore['elevateSession'] };
     readonly audit: AuditSink;
     readonly clock?: () => Date;
+    readonly requireAssistantExecutionAdmission?: boolean;
   },
   input: {
     readonly signInTicket: unknown;
@@ -232,6 +233,7 @@ export async function elevateAssistantSession(
     token: elevated.token,
     expiresAt: elevated.session.expiresAt,
     endpoints: input.endpoints,
+    ...(deps.requireAssistantExecutionAdmission ? { executionAdmission: 'required' as const } : {}),
     ...(input.configuration ? { configuration: input.configuration } : {}),
     // The armed hint: the widget answers with one { resume: true } turn on the turns endpoint.
     ...(elevated.resumeArmed ? { resume: { tool: elevated.tool } } : {}),

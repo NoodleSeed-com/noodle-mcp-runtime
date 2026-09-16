@@ -53,7 +53,13 @@ export async function authenticateSession(
   }
   if (admission === 'session') {
     applyBrowserCors(req, res, session.origin);
-    if (!(await admitAssistantRequest(req, res, deps.admissionGate, session))) return undefined;
+    if (
+      !(await admitAssistantRequest(req, res, deps.admissionGate, {
+        ...session,
+        registry: deps.registry,
+      }))
+    )
+      return undefined;
   }
   return session;
 }

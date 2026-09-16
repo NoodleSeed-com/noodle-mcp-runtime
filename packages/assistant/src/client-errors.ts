@@ -47,12 +47,19 @@ export function parseSession(value: unknown): AssistantSessionResponse {
   if (!isRecord(value) || !isRecord(value.endpoints)) {
     throw clientError('session_failed', 'Assistant session response is invalid', true);
   }
+  const operations = value.endpoints.operations;
+  const operationStatus = value.endpoints.operationStatus;
+  const executionAdmission = value.executionAdmission;
   const interactions = value.endpoints.interactions;
   const apps = value.endpoints.apps;
   const sandbox = value.endpoints.sandbox;
   const transcript = value.endpoints.transcript;
   const suggestions = value.endpoints.suggestions;
   if (
+    (executionAdmission !== undefined && executionAdmission !== 'required') ||
+    (operations !== undefined && typeof operations !== 'string') ||
+    (operationStatus !== undefined && typeof operationStatus !== 'string') ||
+    (executionAdmission === 'required' && (!operations || !operationStatus)) ||
     typeof value.token !== 'string' ||
     typeof value.expiresAt !== 'string' ||
     typeof value.endpoints.turns !== 'string' ||
@@ -67,10 +74,13 @@ export function parseSession(value: unknown): AssistantSessionResponse {
   }
   const configuration = parseAssistantConfiguration(value.configuration);
   return {
+    ...(executionAdmission === 'required' ? { executionAdmission } : {}),
     token: value.token,
     expiresAt: value.expiresAt,
     endpoints: {
       turns: value.endpoints.turns,
+      ...(typeof operations === 'string' ? { operations } : {}),
+      ...(typeof operationStatus === 'string' ? { operationStatus } : {}),
       toolConfirmations: value.endpoints.toolConfirmations,
       ...(typeof interactions === 'string' ? { interactions } : {}),
       ...(typeof apps === 'string' ? { apps } : {}),

@@ -18,6 +18,7 @@ import {
 import { readJsonBody, sendJson } from '@noodle-borg/transport-http';
 import { assistantSessionResponseSchema } from '@noodle-borg/wire-contracts';
 import type { AssistantRouteDeps } from './assistant.js';
+import { admitPublicAssistantMint } from './assistant-public-admission.js';
 import { applyBrowserCors, assistantSessionEndpoints, now } from './assistant-route-http.js';
 import { activeAssistantTarget } from './assistant-session-target.js';
 
@@ -52,6 +53,9 @@ export async function handlePublicAssistantSession(
   // A shared proxy bucket can reduce fairness, but forged forwarding headers cannot rotate it.
   const addressBucket = clientAddressBucket(req.socket.remoteAddress);
 
+  const admittedDeployment = await admitPublicAssistantMint(req, res, deps, embedId, origin);
+  if (admittedDeployment === false) return;
+
   let configuration: AssistantAppearanceOverride | undefined;
   let sponsoredBudget: SurfaceBudgetBounds | undefined;
   let usageSession: AssistantSessionRecord | undefined;
@@ -63,7 +67,11 @@ export async function handlePublicAssistantSession(
       counters,
       resolveActiveSurface: async (embed) => {
         const target = await activeAssistantTarget(deps, publicEmbedTenant(embed));
-        if (!target?.deploymentId) return undefined;
+        if (
+          !target?.deploymentId ||
+          (admittedDeployment !== undefined && target.deploymentId !== admittedDeployment)
+        )
+          return undefined;
         if (target.served.artifact.server.assistant?.model.kind === 'noodle-managed') {
           sponsoredBudget = (
             await deps.managedModelResolver?.resolve({
@@ -81,6 +89,7 @@ export async function handlePublicAssistantSession(
         const target = await activeAssistantTarget(deps, publicEmbedTenant(input.embed));
         if (
           !target?.deploymentId ||
+          (admittedDeployment !== undefined && target.deploymentId !== admittedDeployment) ||
           !publicSurfaceOf(target.served.artifact.server.assistant)?.origins.includes(input.origin)
         )
           throw new Error('assistant surface changed mid-mint');
@@ -134,6 +143,7 @@ export async function handlePublicAssistantSession(
   // Only here, with the origin proven against the live surface, may the page read the response.
   applyBrowserCors(req, res, origin);
   const sessionBody = {
+    ...(deps.requireAssistantExecutionAdmission ? { executionAdmission: 'required' as const } : {}),
     token: result.token,
     expiresAt: result.expiresAt,
     endpoints: assistantSessionEndpoints(deps.serviceBase(req)),

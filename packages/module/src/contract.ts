@@ -314,6 +314,12 @@ export type DataPlaneIdentityAuthorizer = (input: {
 export type AdmissionCategory = 'protocol' | 'discovery' | 'read' | 'execute';
 
 export interface AdmissionContext {
+  /** Runtime-proven public surface; never caller-supplied identity or authorization. */
+  readonly assistantSurface?: {
+    readonly kind: 'public';
+    readonly origin: string;
+    readonly publicEmbedId: string;
+  };
   readonly assistantExecution?: AssistantExecutionContext;
   readonly routeId: string;
   readonly requestId?: string | number | null;

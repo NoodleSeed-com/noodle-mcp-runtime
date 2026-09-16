@@ -100,6 +100,39 @@ async function configuredGate(url: string) {
 }
 
 describe('self-host HTTP admission', () => {
+  it('preserves trusted public surface provenance without inventing a subject', async () => {
+    let received: unknown;
+    const url = await endpoint(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += chunk.toString();
+      received = JSON.parse(body);
+      response.end('{"allow":true}');
+    });
+    const { gate } = await configuredGate(url);
+    const { subject: _subject, ...anonymous } = CONTEXT;
+    await gate({
+      ...anonymous,
+      method: 'assistant/public-sessions',
+      category: 'protocol',
+      assistantSurface: {
+        kind: 'public',
+        origin: 'https://site.example',
+        publicEmbedId: 'pub_aaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+    });
+    expect(received).toMatchObject({
+      version: 1,
+      context: {
+        assistantSurface: {
+          kind: 'public',
+          origin: 'https://site.example',
+          publicEmbedId: 'pub_aaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      },
+    });
+    expect((received as { context: unknown }).context).not.toHaveProperty('subject');
+  });
+
   it('posts the versioned context and bearer credential to the fixed endpoint', async () => {
     let received: unknown;
     const url = await endpoint(async (request, response) => {
