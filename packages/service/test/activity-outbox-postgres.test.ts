@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { ActivityEnvelope } from '@noodle-borg/module';
+import { ensureActivityOutboxSchema, PostgresActivityOutbox } from '@noodle-borg/observability';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { PostgresActivityOutbox } from '../../observability/src/activity-outbox-postgres.js';
-import { ensureActivityOutboxSchema } from '../../observability/src/activity-outbox-schema.js';
 
 const pool = new Pool({ connectionString: process.env.CORE_ACTIVITY_TEST_DATABASE_URL });
 const enabled = !!process.env.CORE_ACTIVITY_TEST_DATABASE_URL;

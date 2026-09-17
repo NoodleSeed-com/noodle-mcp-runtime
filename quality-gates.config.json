@@ -58,8 +58,8 @@
       {
         "path": "packages/assistant-gateway",
         "role": "library",
-        "maxSourceLines": 10022,
-        "reason": "One session lifecycle and turn-dispatch authority; keep continuity inside its existing release boundary. Requester-approved (2026-09-15): bounded durable assistant execution and separation of portable store contracts from the existing in-memory adapter."
+        "maxSourceLines": 10061,
+        "reason": "One session lifecycle and turn-dispatch authority; keep continuity inside its existing release boundary. Requester-approved (2026-09-15): bounded durable assistant execution and separation of portable store contracts from the existing in-memory adapter. Conversation activity (2026-09-18): 39 lines for durable visible-turn identity and capture in the existing session store."
       },
       {
         "path": "packages/cli",
@@ -82,13 +82,13 @@
       {
         "path": "packages/service",
         "role": "composition",
-        "maxSourceLines": 65243,
-        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition. Public embed slice (2026-09-16): exact 117-line increase for trusted public session admission, deployment provenance and execution capability.",
+        "maxSourceLines": 65758,
+        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition. Public embed slice (2026-09-16): exact 117-line increase for trusted public session admission, deployment provenance and execution capability. Conversation activity (2026-09-18): 515 lines for portable outbox composition, tenant-scoped export and admitted turn/search capture.",
         "modules": [
           {
             "path": "src/routes",
-            "maxSourceLines": 14926,
-            "reason": "Public HTTP transport and portable operator API routes. Founder-approved MVP allowance under ADR 0233. Requester-approved deployment and version deletion API adapter allowance (2026-09-14). Requester-approved (2026-09-15): authenticated preparation/status and once-only model execution HTTP routes. Public embed slice (2026-09-16): exact 91-line route increase for pre-mint policy admission and required execution session replies."
+            "maxSourceLines": 15364,
+            "reason": "Public HTTP transport and portable operator API routes. Founder-approved MVP allowance under ADR 0233. Requester-approved deployment and version deletion API adapter allowance (2026-09-14). Requester-approved (2026-09-15): authenticated preparation/status and once-only model execution HTTP routes. Public embed slice (2026-09-16): exact 91-line route increase for pre-mint policy admission and required execution session replies. Conversation activity (2026-09-18): 438 lines for tenant-scoped export and admitted turn/search HTTP capture."
           },
           {
             "path": "src/oauth",

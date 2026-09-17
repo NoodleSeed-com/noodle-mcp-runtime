@@ -3,9 +3,9 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PostgresAssistantStore } from '@noodle-borg/assistant-gateway/postgres';
 import type { ActivityEnvelope, AdmissionContext, AdmissionGate } from '@noodle-borg/module';
+import { ensureActivityOutboxSchema } from '@noodle-borg/observability';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { ensureActivityOutboxSchema } from '../../observability/src/activity-outbox-schema.js';
 import { createServiceHandler, InMemoryAssistantStore, ServerRegistry } from '../src/index.js';
 import { EMBEDDED_ASSISTANT_MANIFEST } from './embedded-assistant-fixtures.js';
 
