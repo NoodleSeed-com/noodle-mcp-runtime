@@ -26,6 +26,7 @@ import {
 import { SecretBox, staticMasterKeyProvider } from '@noodle-borg/runtime';
 import { PostgresStateHandleStore } from '@noodle-borg/runtime/postgres';
 import { noopLogger } from '@noodle-borg/transport-http';
+import { configuredActivityStores } from './activity-runtime.js';
 import { ALERT_EVALUATION_INTERVAL_MS, AlertEvaluator } from './alert-evaluator.js';
 import { createApplicationConnections } from './application-connections.js';
 import { resolveApplicationRuntimeTarget } from './application-runtime-target.js';
@@ -170,6 +171,7 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
   // sink or in-memory. Under Postgres a configured sink is an additive mirror, never a replacement for the
   // transaction-capable SoR. The handler also adds the stdout mirror behind the same fan-out port.
   let auditStore: AuditSink | undefined = options.audit;
+  let activityStores = configuredActivityStores(options);
   let requestEventStore: RequestEventStore | undefined = options.requestEventStore;
   let intentCaptureSettingsStore: IntentCaptureSettingsStore | undefined =
     options.intentCaptureSettingsStore;
@@ -278,6 +280,7 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
         store = postgres;
         controlPlaneStore = controlPlaneStore ?? postgres;
         configStore = configStore ?? postgres;
+        activityStores = configuredActivityStores(options, postgresPool);
         requestEventStore = requestEventStore ?? new PostgresRequestEventStore(postgresPool);
         intentCaptureSettingsStore =
           intentCaptureSettingsStore ?? new PostgresIntentCaptureSettingsStore(postgresPool);
@@ -415,10 +418,11 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
   let businessInformationTimer: NodeJS.Timeout | undefined;
   let stopBusinessInformationSweep: (() => void) | undefined;
   let businessInformationSourceTimer: NodeJS.Timeout | undefined;
-  if (businessInformationStore !== undefined) {
+  if (businessInformationStore !== undefined || activityStores.retention !== undefined) {
     const sweep = retentionSweepTrigger(
       [
         businessInformationStore,
+        activityStores.retention,
         businessInformationSourceStore,
         operationEvidence === undefined
           ? undefined
@@ -728,6 +732,7 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
       // Tenant-safe developer logs (M3, ADR 0101): default to an in-memory store so `noodle logs` works on
       // every booted service; durable (Postgres) retention is a follow-up that keeps the same record shape.
       userAppLogStore: options.userAppLogStore ?? new InMemoryUserAppLogStore(),
+      ...(activityStores.capture ? { activityOutbox: activityStores.capture } : {}),
       requestEventStore,
       intentCaptureSettingsStore,
       intentEventStore,

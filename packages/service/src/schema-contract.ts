@@ -3,10 +3,10 @@ import type { ServeServiceOptions } from './serve-options.js';
 
 /** Change generation for every canonical schema change; incompatible changes must change epoch. */
 export const POSTGRES_SCHEMA_CONTRACT = {
-  generation: 3,
+  generation: 4,
   epoch: 1,
   profile: 'self-host-external-owner-v1',
-  plan: 'core-schema-3',
+  plan: 'core-schema-4',
 } as const;
 export interface SchemaContractRow {
   generation: number;

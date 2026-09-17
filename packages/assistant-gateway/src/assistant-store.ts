@@ -258,7 +258,12 @@ export interface AssistantStore {
   consumePendingResume(sessionId: string): Promise<AssistantPendingResume | undefined>;
 
   getSession(token: string, now: Date): Promise<AssistantSessionRecord | undefined>;
-  appendHistory(id: string, messages: readonly AssistantHistoryMessage[]): Promise<void>;
+  nextActivityOrdinal?(id: string): Promise<number>;
+  appendHistory(
+    id: string,
+    messages: readonly AssistantHistoryMessage[],
+    activity?: (transaction?: import('@noodle-borg/module').ModuleSqlTransaction) => Promise<void>,
+  ): Promise<void>;
   createInteraction(
     input: Extract<AssistantInteractionCreateInput, { readonly kind: 'confirmation' }>,
   ): Promise<AssistantPendingConfirmationInteractionRecord>;

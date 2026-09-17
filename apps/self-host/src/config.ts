@@ -2,6 +2,7 @@ import { isAbsolute, normalize, parse } from 'node:path';
 
 export interface SelfHostConfig {
   readonly databaseUrl: string;
+  readonly activityCaptureEnabled: boolean;
   readonly requireAssistantExecutionAdmission: boolean;
   readonly secretMasterKey: string;
   readonly adminToken: string;
@@ -42,6 +43,7 @@ const KNOWN_NOODLE_VARIABLES = new Set([
   'NOODLE_ASSET_STORAGE',
   'NOODLE_ASSET_BUCKET',
   'NOODLE_SCHEMA_MODE',
+  'NOODLE_ACTIVITY_CAPTURE_ENABLED',
   'NOODLE_TRUST_PROXY',
   'NOODLE_ADMISSION_GOOGLE_AUDIENCE',
   'NOODLE_ADMISSION_TIMEOUT_MS',
@@ -136,8 +138,14 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
       'NOODLE_ADMISSION_URL requires external owner authentication with NOODLE_OAUTH_ISSUER and NOODLE_OAUTH_JWKS_URI',
     );
   }
+  const activityCapture = optional(env, 'NOODLE_ACTIVITY_CAPTURE_ENABLED') ?? 'false';
+  if (activityCapture !== 'true' && activityCapture !== 'false')
+    throw configurationError('NOODLE_ACTIVITY_CAPTURE_ENABLED must be true or false');
+  if (activityCapture === 'true' && schemaMode !== 'external')
+    throw configurationError('Activity capture requires externally migrated schema');
   return {
     databaseUrl,
+    activityCaptureEnabled: activityCapture === 'true',
     requireAssistantExecutionAdmission,
     secretMasterKey,
     adminToken,

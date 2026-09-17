@@ -2,7 +2,7 @@
  * The bundled production `KnowledgeIndex` adapter: an in-process BM25 index built from the
  * active revision's documents at activation time (ADR 0202 as amended — managed-bundled v0).
  *
- * Deliberate scope: curated public corpora within the structural limits (≤100 docs, ≤25 MiB)
+ * Deliberate scope: curated public corpora within the structural limits (≤102 docs, ≤25 MiB)
  * where lexical retrieval is honest evidence. Semantic ranking is the managed-Google tier's
  * job; this adapter must never grow an embedding pipeline.
  */
@@ -20,6 +20,7 @@ import { revisionContentHash } from './revision-store.js';
 
 interface IndexedDocument {
   readonly descriptor: StagedDocument['descriptor'];
+  readonly text: string;
   readonly terms: readonly string[];
   readonly termFrequencies: ReadonlyMap<string, number>;
   readonly length: number;
@@ -58,7 +59,13 @@ export class Bm25KnowledgeIndex implements KnowledgeIndex {
       const terms = tokenize(document.text);
       const termFrequencies = new Map<string, number>();
       for (const term of terms) termFrequencies.set(term, (termFrequencies.get(term) ?? 0) + 1);
-      return { descriptor: document.descriptor, terms, termFrequencies, length: terms.length };
+      return {
+        descriptor: document.descriptor,
+        text: document.text,
+        terms,
+        termFrequencies,
+        length: terms.length,
+      };
     });
     const documentFrequencies = new Map<string, number>();
     for (const document of indexed) {
@@ -158,7 +165,7 @@ export class Bm25KnowledgeIndex implements KnowledgeIndex {
       .map(({ document }) => ({
         id: `doc:${document.descriptor.sha256.slice(0, 16)}`,
         title: document.descriptor.title,
-        excerpt: buildExcerpt(document.terms.join(' '), request.query),
+        excerpt: buildExcerpt(document.text, request.query),
         sourceKind: 'document' as const,
         ...(document.descriptor.sourceUrl !== undefined
           ? { uri: document.descriptor.sourceUrl }

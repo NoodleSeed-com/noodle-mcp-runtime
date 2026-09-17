@@ -56,6 +56,9 @@ import type { ConfigStore, ControlPlaneStore } from './store.js';
 import type { InvitationEmailSender, WelcomeEmailSender } from './welcome-email.js';
 
 export interface ServiceOptions {
+  /** Opt-in durable activity capture/export. No store means disabled. */
+  readonly activityOutbox?: import('@noodle-borg/module').ActivityOutbox;
+  readonly activityCaptureEnabled?: boolean;
   /** Deployment-owned agreement authority. Hosted composition supplies an empty policy until documents are approved. */
   readonly businessOnboarding?: BusinessOnboardingOptions;
   /** Internal durable execution evidence composition; allowance comes from an operator-selected module. */

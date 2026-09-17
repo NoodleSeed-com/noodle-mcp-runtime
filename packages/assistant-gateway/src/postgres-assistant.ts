@@ -493,15 +493,38 @@ export class PostgresAssistantStore implements AssistantStore {
     return result.rows[0] ? sessionFromRow(result.rows[0]) : undefined;
   }
 
-  async appendHistory(id: string, messages: readonly AssistantHistoryMessage[]): Promise<void> {
-    await this.#pool.query(
-      `UPDATE assistant_sessions
+  async nextActivityOrdinal(id: string): Promise<number> {
+    const result = await this.#pool.query<{ ordinal: number }>(
+      "INSERT INTO activity_turn_ordinals(session_id,ordinal,expires_at) VALUES($1,1,now()+interval '30 days') ON CONFLICT(session_id) DO UPDATE SET ordinal=activity_turn_ordinals.ordinal+1,expires_at=EXCLUDED.expires_at RETURNING ordinal",
+      [id],
+    );
+    return result.rows[0]!.ordinal;
+  }
+
+  async appendHistory(
+    id: string,
+    messages: readonly AssistantHistoryMessage[],
+    activity?: (transaction?: import('@noodle-borg/module').ModuleSqlTransaction) => Promise<void>,
+  ): Promise<void> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE assistant_sessions
        SET history=(SELECT COALESCE(jsonb_agg(value ORDER BY n), '[]'::jsonb)
                     FROM (SELECT value, n FROM jsonb_array_elements(history || $2::jsonb)
                           WITH ORDINALITY AS e(value, n) ORDER BY n DESC LIMIT ${ASSISTANT_HISTORY_MAX_MESSAGES}) recent)
        WHERE id=$1`,
-      [id, JSON.stringify(messages)],
-    );
+        [id, JSON.stringify(messages)],
+      );
+      await activity?.(client);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createInteraction(

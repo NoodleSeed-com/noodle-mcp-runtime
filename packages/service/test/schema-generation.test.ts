@@ -25,6 +25,7 @@ const OWNERS = [
   'packages/knowledge/src/postgres-budget-store.ts',
   'packages/knowledge/src/postgres-revision-store.ts',
   'packages/module-audit/src/postgres-audit.ts',
+  'packages/observability/src/activity-outbox-schema.ts',
   'packages/observability/src/intent-capture.ts',
   'packages/observability/src/request-events-postgres.ts',
   'packages/runtime/src/postgres-state-handles.ts',
@@ -60,13 +61,13 @@ it('requires an explicit schema generation and compatibility decision when canon
       .update(readFileSync(new URL(file, root)))
       .update('\0');
   expect(POSTGRES_SCHEMA_CONTRACT).toEqual({
-    generation: 3,
+    generation: 4,
     epoch: 1,
     profile: 'self-host-external-owner-v1',
-    plan: 'core-schema-3',
+    plan: 'core-schema-4',
   });
   expect(
     hash.digest('hex'),
     'Review schema generation and compatibility epoch before updating this lock',
-  ).toBe('52cc43dfc1f4821a3a7ae4dfe28ccabe4cffd7b4969bd5314b478dbb3ce3929c');
+  ).toBe('538b2fb4f64c1f9b0aa05450b9f702297ed444b90b02af8d8236f7aa58255a4c');
 });

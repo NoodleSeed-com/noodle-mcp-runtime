@@ -146,3 +146,25 @@ NOODLE_TRUST_PROXY=true
 This opt-in configures the service process; the generated loopback Compose topology does not provision a
 reverse proxy or propagate this option. Leave it unset for direct local HTTP. Do not expose the container
 port to untrusted direct clients when proxy trust is enabled.
+
+## Optional retained activity export
+
+`NOODLE_ACTIVITY_CAPTURE_ENABLED=true` enables durable assistant turn and knowledge-search
+activity capture plus authenticated `POST /v1/orgs/:org/activity/claim` and `/activity/ack`.
+It defaults to `false` and requires `NOODLE_SCHEMA_MODE=external` with schema generation 4
+installed through the migration command before activation. Disabling capture also disables
+export; expiration maintenance continues against the externally migrated database.
+
+Claim accepts `{ "limit": 50 }` (1–50) and returns `{ leaseToken, leaseExpiresAt, events }`.
+Acknowledgement accepts `{ leaseToken, eventIds }` and returns `{ acknowledged }`. Existing
+control-plane tenant authorization applies; public embed credentials cannot export activity.
+Leases last 60 seconds. Claim responses are bounded to 1 MiB and events to 256 KiB.
+Successfully acknowledged payloads are deleted. Undelivered content expires after 30 days;
+linked turn/search content uses the accepted turn's start time, never collection time.
+
+Capture records visible text and validated knowledge evidence only. Direct MCP searches have
+no fabricated assistant conversation. Current capture does not attach client-name hints or a
+native knowledge revision identifier: these are unavailable at the deployment-bound search
+port. Deployment identity remains captured. Recording failures emit content-free diagnostics
+and do not rerun a model or tool. A database outage can lose optional archive records; this
+feature does not promise lossless capture during storage failure.

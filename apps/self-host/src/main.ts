@@ -87,6 +87,7 @@ export async function startSelfHostService(
     ...(config.trustProxy ? { tls: { trustProxy: true, requireHttps: true } } : {}),
     assetPublicBaseUrl: config.publicBaseUrl,
     databaseUrl: config.databaseUrl,
+    ...(config.activityCaptureEnabled ? { activityCaptureEnabled: true } : {}),
     secretMasterKey: config.secretMasterKey,
     warmAll: config.schemaMode !== 'external',
     ...(config.schemaMode === 'external' ? { schemaMode: 'external' as const } : {}),

@@ -17,6 +17,9 @@ import {
 } from '../src/limits.js';
 
 describe('structural limits and schemas', () => {
+  it('supports 100 source pages plus two supplemental documents', () => {
+    expect(MAX_DOCUMENTS_PER_COMPONENT).toBeGreaterThanOrEqual(102);
+  });
   it('rejects queries beyond the 2000-character bound', () => {
     expect(
       searchRequestSchema.safeParse({ query: 'a'.repeat(MAX_QUERY_CHARS), limit: 8 }).success,

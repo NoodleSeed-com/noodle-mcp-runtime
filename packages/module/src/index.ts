@@ -1,3 +1,4 @@
+export * from './activity.js';
 export * from './asset-store.js';
 export * from './assistant-execution.js';
 export * from './contract.js';

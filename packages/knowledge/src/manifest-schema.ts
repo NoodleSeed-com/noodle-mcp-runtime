@@ -4,6 +4,7 @@
  * and the compile pass consume.
  */
 import { z } from 'zod';
+import { MAX_DOCUMENTS_PER_COMPONENT } from './limits.js';
 
 const httpsUrlSchema = z.url().regex(/^https:\/\//, 'must use https');
 
@@ -74,7 +75,7 @@ export const knowledgeComponentManifestSchema = z
     name: z.string().regex(/^[a-z][a-z0-9_]*$/, 'must be lowercase snake-case'),
     title: z.string().trim().min(1),
     description: z.string().min(1),
-    documents: z.array(knowledgeDocumentManifestSchema).max(100),
+    documents: z.array(knowledgeDocumentManifestSchema).max(MAX_DOCUMENTS_PER_COMPONENT),
     sites: z.array(knowledgeSiteManifestSchema),
     crawler: knowledgeCrawlerManifestSchema.optional(),
     index: knowledgeIndexManifestSchema.optional(),

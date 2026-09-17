@@ -39,6 +39,7 @@ import { handleAssistantSuggestions } from './assistant-suggestions.js';
 import { handleAssistantTranscript } from './assistant-transcript.js';
 
 export interface AssistantDispatchDeps {
+  readonly activityOutbox?: import('@noodle-borg/module').ActivityOutbox;
   readonly registry: ServerRegistry;
   readonly admissionGate?: AdmissionGate;
   readonly requireAssistantExecutionAdmission?: boolean;

@@ -64,6 +64,7 @@ import { sendUnauthorized } from '../http-util.js';
 import type { ServerRegistry } from '../registry.js';
 import type { AuditSink } from '../store/audit.js';
 import type { ControlPlaneStore } from '../store.js';
+import { finishedAssistantActivity, startAssistantActivity } from './assistant-activity.js';
 import { type AssistantEvent, createAssistantTurnStats, runAgentTurn } from './assistant-agent.js';
 import { elevateAssistantSession } from './assistant-elevation.js';
 import {
@@ -85,10 +86,12 @@ import {
   sessionScopedTarget,
 } from './assistant-session-target.js';
 import { authorizeControlPlane } from './control-plane.js';
+import { withKnowledgeActivity } from './knowledge-activity.js';
 
 export { applyBrowserCors, authenticateSession, handleAssistantPreflight, now };
 
 export interface AssistantRouteDeps {
+  readonly activityOutbox?: import('@noodle-borg/module').ActivityOutbox;
   readonly registry: ServerRegistry;
   /** Optional external policy, separate from built-in MCP and public embed capacity counters. */
   readonly admissionGate?: AdmissionGate;
@@ -384,6 +387,27 @@ export async function handleAssistantTurn(
     ? await claimAssistantExecution(req, res, deps, session, target, turn)
     : undefined;
   if (turn?.operationId && !execution) return;
+  const activity = turn
+    ? await startAssistantActivity(deps, session, message.trim(), execution?.operationId)
+    : undefined;
+  const activityTarget =
+    activity && deps.activityOutbox
+      ? withKnowledgeActivity(
+          target,
+          {
+            tenant: session.tenant,
+            deploymentId: session.deploymentId,
+            channel: activity.identity.channel,
+            sessionId: session.id,
+            turnId: activity.identity.turnId,
+            turnStartedAt: activity.identity.startedAt,
+          },
+          (event) => deps.activityOutbox!.append(event),
+          () => deps.logger?.warn('activity.capture.failed', { kind: 'knowledge.search.finished' }),
+        )
+      : target;
+  let activityFinished = false;
+  let pendingTerminal: import('@noodle-borg/module').ActivityEnvelope | undefined;
   let operationCompleted = false;
   try {
     const invocationContext = await resolveInvocationContextSnapshot({
@@ -424,7 +448,7 @@ export async function handleAssistantTurn(
         }
       }
       await runAgentTurn(
-        target,
+        activityTarget,
         session,
         message.trim(),
         invocationContext,
@@ -454,26 +478,66 @@ export async function handleAssistantTurn(
         transport: assistantModelTransport(target?.served.artifact.server.assistant?.model),
       });
     }
+    const assistantContent = events
+      .filter((event) => event.event === 'content')
+      .map((event) => String(event.data.delta ?? ''))
+      .join('');
+    const failure = events.find((event) => event.event === 'error');
+    const terminal = activity
+      ? finishedAssistantActivity(
+          deps,
+          session,
+          activity,
+          assistantContent,
+          failure ? 'failed' : turnCompleted ? 'completed' : 'unknown',
+          typeof failure?.data.code === 'string' ? failure.data.code : undefined,
+        )
+      : undefined;
+    pendingTerminal = terminal;
     if (turnCompleted) {
-      const assistantContent = events
-        .filter((event) => event.event === 'content')
-        .map((event) => String(event.data.delta ?? ''))
-        .join('');
+      const messages = [
+        {
+          role: 'user' as const,
+          content: message.trim(),
+          kind: turn ? ('visible' as const) : ('narration' as const),
+        },
+        ...(assistantContent
+          ? [{ role: 'assistant' as const, content: assistantContent, kind: 'visible' as const }]
+          : []),
+      ];
       try {
-        await deps.store.appendHistory(session.id, [
-          { role: 'user', content: message.trim(), kind: turn ? 'visible' : 'narration' },
-          ...(assistantContent
-            ? [{ role: 'assistant' as const, content: assistantContent, kind: 'visible' as const }]
-            : []),
-        ]);
+        await deps.store.appendHistory(
+          session.id,
+          messages,
+          terminal
+            ? (transaction) => deps.activityOutbox!.append(terminal, transaction)
+            : undefined,
+        );
+        activityFinished = terminal !== undefined;
       } catch {
-        emit({ event: 'error', data: { code: 'conversation_state_failed', retryable: false } });
         deps.logger?.warn('assistant.history.failed', {
           org: session.tenant.org,
           app: session.tenant.app,
           env: session.tenant.env,
           deploymentId: session.deploymentId,
         });
+        if (terminal) {
+          // Archive failure must not erase ordinary live-session history or rerun execution.
+          deps.logger?.warn('activity.capture.failed', { kind: 'assistant.turn.finished' });
+          try {
+            await deps.store.appendHistory(session.id, messages);
+          } catch {
+            emit({ event: 'error', data: { code: 'conversation_state_failed', retryable: false } });
+          }
+        } else
+          emit({ event: 'error', data: { code: 'conversation_state_failed', retryable: false } });
+      }
+    } else if (terminal) {
+      try {
+        await deps.activityOutbox!.append(terminal);
+        activityFinished = true;
+      } catch {
+        deps.logger?.warn('activity.capture.failed', { kind: 'assistant.turn.finished' });
       }
     }
     operationCompleted = turnCompleted && !events.some((event) => event.event === 'error');
@@ -498,6 +562,15 @@ export async function handleAssistantTurn(
       }),
     );
   } finally {
+    if (activity && !activityFinished) {
+      try {
+        await deps.activityOutbox!.append(
+          pendingTerminal ?? finishedAssistantActivity(deps, session, activity, '', 'unknown'),
+        );
+      } catch {
+        deps.logger?.warn('activity.capture.failed', { kind: 'assistant.turn.finished' });
+      }
+    }
     if (execution && !operationCompleted)
       await deps.store.operations.finish(execution.operationId, execution.scope, 'unknown');
   }

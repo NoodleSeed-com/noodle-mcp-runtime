@@ -9,7 +9,7 @@ export const ALLOWED_DOCUMENT_EXTENSIONS = ['.md', '.txt'] as const;
 
 /** Enforced identically at compile and at deploy preflight — never one without the other. */
 export const MAX_KNOWLEDGE_COMPONENTS = 20;
-export const MAX_DOCUMENTS_PER_COMPONENT = 100;
+export const MAX_DOCUMENTS_PER_COMPONENT = 102;
 export const MAX_DOCUMENT_BYTES = 1024 * 1024;
 export const MAX_COMPONENT_TOTAL_BYTES = 25 * 1024 * 1024;
 

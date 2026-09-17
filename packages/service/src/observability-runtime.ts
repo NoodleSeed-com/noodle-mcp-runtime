@@ -17,8 +17,10 @@ import {
 } from '@noodle-borg/transport-http';
 import type { ServiceOptions } from './options.js';
 import type { ServerRegistry } from './registry.js';
+import { handleActivityExport } from './routes/activity.js';
 import { dispatchAnalyticsReads } from './routes/analytics-dispatch.js';
 import { dispatchIntentCaptureRoutes } from './routes/intent-capture-dispatch.js';
+import { withKnowledgeActivity } from './routes/knowledge-activity.js';
 import type { AuditSink } from './store/audit.js';
 import type { ControlPlaneStore } from './store.js';
 
@@ -55,11 +57,34 @@ async function resolveIntentMode(
 export function createIntentTargetResolver(
   settings: IntentCaptureSettingsStore,
   previewOrgs: ReadonlySet<string>,
+  options?: ServiceOptions,
 ) {
   return (
     target: Awaited<ReturnType<ServerRegistry['getServing']>>,
     ref?: TenantRouteRef,
-  ): Promise<ServedTarget | undefined> => resolveIntentMode(target, ref, previewOrgs, settings);
+  ): Promise<ServedTarget | undefined> =>
+    resolveIntentMode(target, ref, previewOrgs, settings).then((resolved) => {
+      if (
+        !resolved ||
+        !options?.activityOutbox ||
+        !resolved.org ||
+        !resolved.app ||
+        !resolved.environment ||
+        !resolved.deploymentId
+      )
+        return resolved;
+      return withKnowledgeActivity(
+        resolved,
+        {
+          tenant: { org: resolved.org, app: resolved.app, env: resolved.environment },
+          deploymentId: resolved.deploymentId,
+          channel: 'external_mcp',
+        },
+        (event) => options.activityOutbox!.append(event),
+        () =>
+          options.logger?.warn('activity.capture.failed', { kind: 'knowledge.search.finished' }),
+      );
+    });
 }
 
 export function createObservabilityDispatcher(deps: {
@@ -74,30 +99,48 @@ export function createObservabilityDispatcher(deps: {
   readonly tls: TlsPosture;
   readonly options: ServiceOptions;
 }): (req: IncomingMessage, res: ServerResponse, url: URL) => boolean {
-  return (req, res, url) =>
-    dispatchAnalyticsReads(req, res, url, {
-      gate: deps.gate,
-      controlPlane: deps.controlPlane,
-      requestEventStore: deps.requestEvents,
-      applySecurityHeaders,
-      enforceHttps,
-      sendJson,
-      tls: deps.tls,
-      developerGrantStore: deps.options.developerGrantStore,
-    }) ||
-    dispatchIntentCaptureRoutes(req, res, url, {
-      gate: deps.gate,
-      controlPlane: deps.controlPlane,
-      settings: deps.intentSettings,
-      intents: deps.intentEvents,
-      requests: deps.requestEvents,
-      audit: deps.audit,
-      maxBody: deps.maxBody,
-      previewOrgs: deps.previewOrgs,
-      applySecurityHeaders,
-      enforceHttps,
-      sendJson,
-      tls: deps.tls,
-      ...(deps.options.clock === undefined ? {} : { clock: deps.options.clock }),
-    });
+  return (req, res, url) => {
+    const match = /^\/v1\/orgs\/([^/]+)\/activity\/(claim|ack)$/.exec(url.pathname);
+    if (match && req.method === 'POST' && deps.options.activityOutbox) {
+      applySecurityHeaders(res, deps.tls);
+      if (enforceHttps(req, res, deps.tls)) return true;
+      void handleActivityExport(
+        req,
+        res,
+        decodeURIComponent(match[1]!),
+        match[2] as 'claim' | 'ack',
+        { gate: deps.gate, controlPlane: deps.controlPlane, outbox: deps.options.activityOutbox },
+      ).catch(() => {
+        if (!res.headersSent) sendJson(res, 500, { error: 'activity storage unavailable' });
+      });
+      return true;
+    }
+    return (
+      dispatchAnalyticsReads(req, res, url, {
+        gate: deps.gate,
+        controlPlane: deps.controlPlane,
+        requestEventStore: deps.requestEvents,
+        applySecurityHeaders,
+        enforceHttps,
+        sendJson,
+        tls: deps.tls,
+        developerGrantStore: deps.options.developerGrantStore,
+      }) ||
+      dispatchIntentCaptureRoutes(req, res, url, {
+        gate: deps.gate,
+        controlPlane: deps.controlPlane,
+        settings: deps.intentSettings,
+        intents: deps.intentEvents,
+        requests: deps.requestEvents,
+        audit: deps.audit,
+        maxBody: deps.maxBody,
+        previewOrgs: deps.previewOrgs,
+        applySecurityHeaders,
+        enforceHttps,
+        sendJson,
+        tls: deps.tls,
+        ...(deps.options.clock === undefined ? {} : { clock: deps.options.clock }),
+      })
+    );
+  };
 }

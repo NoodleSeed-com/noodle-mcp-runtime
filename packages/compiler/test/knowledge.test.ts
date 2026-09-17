@@ -231,12 +231,13 @@ describe('knowledge compile pass', () => {
   });
 
   it('enforces the per-component document-count bound', () => {
-    const documents = Array.from({ length: 101 }, (_, index) => ({
+    const documents = Array.from({ length: 103 }, (_, index) => ({
       path: `docs/product.md`,
       title: `Doc ${index}`,
       sha256: 'a'.repeat(64),
       bytes: 1,
     }));
+    expect(compileWith([component(documents.slice(0, 102))], undefined).ok).toBe(true);
     const result = compileWith([component(documents)], undefined);
     expect(result.ok).toBe(false);
   });

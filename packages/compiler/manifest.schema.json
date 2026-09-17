@@ -3630,7 +3630,7 @@
                     "minLength": 1
                   },
                   "documents": {
-                    "maxItems": 100,
+                    "maxItems": 102,
                     "type": "array",
                     "items": {
                       "type": "object",

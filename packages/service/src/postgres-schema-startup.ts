@@ -1,5 +1,5 @@
 import { createPostgresKnowledgeStores } from '@noodle-borg/knowledge-operations';
-import { ensureIntentCaptureSchema } from '@noodle-borg/observability';
+import { ensureActivityOutboxSchema, ensureIntentCaptureSchema } from '@noodle-borg/observability';
 import type { SecretBox } from '@noodle-borg/runtime';
 import type { Pool } from 'pg';
 import {
@@ -21,6 +21,7 @@ export async function initializePostgresCoreSchema(
   options: ServeServiceOptions,
   secretBox?: SecretBox,
 ) {
+  if (options.schemaMode === 'external') await ensureActivityOutboxSchema(pool);
   await ensureMcpConfirmationNonceSchema(pool);
   const report = await new PostgresArtifactStore(pool).ensureSchemaWithCustomerAuthAudienceReport();
   await createPostgresKnowledgeStores(pool, secretBox);

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import type {
   AssistantPendingConfirmationInteractionRecord,
@@ -6,8 +7,10 @@ import type {
   AssistantViewAvailableData,
 } from '@noodle-borg/assistant-gateway/portable';
 import { assistantConfirmationProposal } from '@noodle-borg/assistant-gateway/portable';
+import { ACTIVITY_RETENTION_MS } from '@noodle-borg/module';
 import type { InvocationContext } from '@noodle-borg/runtime';
 import type { AssistantRouteDeps } from './assistant.js';
+import { finishedAssistantActivity } from './assistant-activity.js';
 import { narrateInteractionResolution } from './assistant-agent.js';
 
 type InteractionAction = 'accept' | 'decline' | 'cancel';
@@ -25,6 +28,8 @@ export async function narrateResolvedInteraction(
   context: InvocationContext,
   suggestions = false,
 ): Promise<void> {
+  const startedAt = (deps.clock?.() ?? new Date()).toISOString();
+  const monotonicStart = performance.now();
   try {
     const generated = await narrateInteractionResolution(
       target,
@@ -39,9 +44,40 @@ export async function narrateResolvedInteraction(
     );
     if (generated.narration) {
       // Streamed to the panel as content deltas above, so it is genuine visible prose.
-      await deps.store.appendHistory(session.id, [
-        { role: 'assistant', content: generated.narration, kind: 'visible' },
-      ]);
+      const messages = [
+        { role: 'assistant' as const, content: generated.narration, kind: 'visible' as const },
+      ];
+      if (deps.activityOutbox && deps.store.nextActivityOrdinal) {
+        try {
+          const terminal = finishedAssistantActivity(
+            deps,
+            session,
+            {
+              identity: {
+                sessionId: session.id,
+                turnId: randomUUID(),
+                ordinal: await deps.store.nextActivityOrdinal(session.id),
+                startedAt,
+                channel: session.publicEmbedId
+                  ? 'website_embed'
+                  : session.tenant.env === 'test'
+                    ? 'private_test'
+                    : 'unknown',
+              },
+              expiresAt: new Date(Date.parse(startedAt) + ACTIVITY_RETENTION_MS).toISOString(),
+              monotonicStart,
+            },
+            generated.narration,
+            'completed',
+          );
+          await deps.store.appendHistory(session.id, messages, (transaction) =>
+            deps.activityOutbox!.append(terminal, transaction),
+          );
+        } catch {
+          deps.logger?.warn('activity.capture.failed', { kind: 'assistant.turn.finished' });
+          await deps.store.appendHistory(session.id, messages);
+        }
+      } else await deps.store.appendHistory(session.id, messages);
     }
     if (generated.suggestions.length > 0) {
       await deps.store.replaceLatestSuggestions(session.id, {

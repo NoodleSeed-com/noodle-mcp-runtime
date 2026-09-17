@@ -309,9 +309,20 @@ export class InMemoryAssistantStore implements AssistantStore {
     return refreshed;
   }
 
-  async appendHistory(id: string, messages: readonly AssistantHistoryMessage[]): Promise<void> {
+  readonly #activityOrdinals = new Map<string, number>();
+  async nextActivityOrdinal(id: string): Promise<number> {
+    const ordinal = (this.#activityOrdinals.get(id) ?? 0) + 1;
+    this.#activityOrdinals.set(id, ordinal);
+    return ordinal;
+  }
+  async appendHistory(
+    id: string,
+    messages: readonly AssistantHistoryMessage[],
+    activity?: (transaction?: import('@noodle-borg/module').ModuleSqlTransaction) => Promise<void>,
+  ): Promise<void> {
     const session = this.#sessions.get(id);
     if (!session) return;
+    await activity?.();
     session.history.push(...messages);
     if (session.history.length > ASSISTANT_HISTORY_MAX_MESSAGES) {
       session.history.splice(0, session.history.length - ASSISTANT_HISTORY_MAX_MESSAGES);

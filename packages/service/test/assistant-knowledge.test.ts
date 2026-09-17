@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { defaultKnowledgeStores, wireKnowledge } from '@noodle-borg/knowledge-operations';
+import type { ActivityEnvelope } from '@noodle-borg/module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createServiceHandler,
@@ -116,11 +117,20 @@ describe('assistant loop knowledge tools', () => {
     });
     expect(deployed.ok).toBe(true);
 
+    const activity: ActivityEnvelope[] = [];
     const modelFetch = vi.fn<typeof fetch>();
     const server = createServer(
       createServiceHandler(registry, {
         assistantStore: new InMemoryAssistantStore(),
         assistantModelFetch: modelFetch,
+        activityOutbox: {
+          append: async (e) => {
+            activity.push(e);
+          },
+          claim: async () => ({ leaseToken: 'x', leaseExpiresAt: 'x', events: activity }),
+          ack: async () => 0,
+          purgeExpired: async () => 0,
+        },
         audit: new InMemoryAuditStore(),
         configStore,
       }),
@@ -147,7 +157,7 @@ describe('assistant loop knowledge tools', () => {
     });
     expect(sessionResponse.status).toBe(201);
     const session = await sessionResponse.json();
-    return { base, modelFetch, session, configStore, scope };
+    return { base, modelFetch, session, configStore, scope, activity };
   }
 
   function turn(base: string, token: string, message: string): Promise<Response> {
@@ -168,8 +178,31 @@ describe('assistant loop knowledge tools', () => {
       headers: { 'content-type': 'application/json' },
     });
 
+  it('retains an accepted visible turn and completed Markdown without model-only context', async () => {
+    const { base, modelFetch, session, activity } = await start();
+    modelFetch.mockResolvedValue(
+      modelReply({
+        choices: [
+          { message: { role: 'assistant', content: 'Answer [source](https://example.com)' } },
+        ],
+      }),
+    );
+    await (await turn(base, session.token, 'Hello')).text();
+    expect(activity.map((e) => e.kind)).toEqual([
+      'assistant.turn.started',
+      'assistant.turn.finished',
+    ]);
+    expect(activity[0]?.payload).toMatchObject({ userText: 'Hello', ordinal: 1 });
+    expect(activity[1]?.payload).toMatchObject({
+      assistantText: 'Answer [source](https://example.com)',
+      outcome: 'completed',
+      ordinal: 1,
+    });
+    expect(activity[1]?.expiresAt).toBe(activity[0]?.expiresAt);
+  });
+
   it('lists the generated tool with citation guidance, executes it, and answers from hits', async () => {
-    const { base, modelFetch, session } = await start();
+    const { base, modelFetch, session, activity } = await start();
     modelFetch
       .mockResolvedValueOnce(
         modelReply({
@@ -220,6 +253,73 @@ describe('assistant loop knowledge tools', () => {
     const secondBody = String(modelFetch.mock.calls[1]?.[1]?.body);
     expect(secondBody).toContain('Pricing guide');
     expect(secondBody).toContain('pricing starts at ten dollars');
+    const searches = activity.filter((e) => e.kind === 'knowledge.search.finished');
+    expect(searches).toHaveLength(1);
+    expect(searches[0]?.payload).toMatchObject({
+      query: 'pricing',
+      turnId: activity[0]?.payload.turnId,
+      hits: [{ sourceKind: 'document', title: 'Pricing guide' }],
+    });
+  });
+
+  it('keeps two searches in one turn distinct and captures failed turns', async () => {
+    const { base, modelFetch, session, activity } = await start();
+    modelFetch
+      .mockResolvedValueOnce(
+        modelReply({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: ['pricing', 'hosting'].map((query, index) => ({
+                  id: `call-${index}`,
+                  type: 'function',
+                  function: { name: 'search_product', arguments: JSON.stringify({ query }) },
+                })),
+              },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        modelReply({ choices: [{ message: { role: 'assistant', content: 'Done' } }] }),
+      );
+    await (await turn(base, session.token, 'Two questions')).text();
+    const searches = activity.filter((e) => e.kind === 'knowledge.search.finished');
+    expect(searches).toHaveLength(2);
+    expect(new Set(searches.map((e) => e.payload.invocationId)).size).toBe(2);
+    expect(new Set(searches.map((e) => e.payload.turnId)).size).toBe(1);
+    modelFetch.mockRejectedValueOnce(new Error('private provider details'));
+    await (await turn(base, session.token, 'Again')).text();
+    expect(activity.at(-1)?.payload).toMatchObject({ outcome: 'failed', ordinal: 2 });
+    expect(JSON.stringify(activity)).not.toContain('private provider details');
+  });
+
+  it('captures direct MCP results once without accepting guessed conversation correlation', async () => {
+    const { base, session, activity } = await start();
+    const response = await fetch(`${base}/o/acme/support/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'search_product',
+          arguments: { query: 'pricing' },
+          _meta: { sessionId: session.id, turnId: 'guessed' },
+        },
+      }),
+    });
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(activity).toHaveLength(1);
+    expect(activity[0]?.payload).toMatchObject({ channel: 'external_mcp', query: 'pricing' });
+    expect(activity[0]?.payload).not.toHaveProperty('turnId');
   });
 
   it('unlists the tool when the gate is flipped off after deploy (kill switch)', async () => {

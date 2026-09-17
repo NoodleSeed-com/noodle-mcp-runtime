@@ -151,7 +151,7 @@ export function createServiceHandler(
           allowance: async (org, request) =>
             moduleHost.resolveActivityHistoryAllowance?.(org, request),
         });
-  const withIntentMode = createIntentTargetResolver(intentSettings, intentPreviewOrgs);
+  const withIntentMode = createIntentTargetResolver(intentSettings, intentPreviewOrgs, options);
   const {
     activateInstallation,
     readInstallationActivation,
@@ -432,6 +432,7 @@ export function createServiceHandler(
         ...(options.admissionEnvelope !== undefined
           ? { admissionEnvelope: options.admissionEnvelope }
           : {}),
+        ...(options.activityOutbox ? { activityOutbox: options.activityOutbox } : {}),
         gate,
         controlPlane,
         audit: activeAudit,

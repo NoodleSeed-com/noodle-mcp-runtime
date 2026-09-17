@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PostgresAssistantStore } from '@noodle-borg/assistant-gateway/postgres';
-import type { AdmissionContext, AdmissionGate } from '@noodle-borg/module';
+import type { ActivityEnvelope, AdmissionContext, AdmissionGate } from '@noodle-borg/module';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { ensureActivityOutboxSchema } from '../../observability/src/activity-outbox-schema.js';
 import { createServiceHandler, InMemoryAssistantStore, ServerRegistry } from '../src/index.js';
 import { EMBEDDED_ASSISTANT_MANIFEST } from './embedded-assistant-fixtures.js';
 
@@ -37,7 +38,10 @@ for (const kind of ['memory', 'postgres'] as const)
           ? new Pool({ connectionString: process.env.DATABASE_URL_TEST })
           : undefined;
       beforeAll(async () => {
-        if (pool) await new PostgresAssistantStore(pool).ensureSchema();
+        if (pool) {
+          await new PostgresAssistantStore(pool).ensureSchema();
+          await ensureActivityOutboxSchema(pool);
+        }
       });
       afterAll(async () => {
         await pool?.end();
@@ -122,9 +126,19 @@ for (const kind of ['memory', 'postgres'] as const)
             output: [{ type: 'message', content: [{ type: 'output_text', text: 'answer' }] }],
           });
         };
+        const activity: ActivityEnvelope[] = [];
+        const activityOutbox = {
+          append: async (event: ActivityEnvelope) => {
+            activity.push(event);
+          },
+          claim: async () => ({ leaseToken: '', leaseExpiresAt: '', events: activity }),
+          ack: async () => 0,
+          purgeExpired: async () => 0,
+        };
         const server = createServer(
           createServiceHandler(registry, {
             assistantStore: store,
+            activityOutbox,
             requireAssistantExecutionAdmission: true,
             assistantModelFetch: modelFetch,
             ...(admissionGate === undefined ? {} : { admissionGate }),
@@ -148,6 +162,7 @@ for (const kind of ['memory', 'postgres'] as const)
           base,
           store,
           providerRequests,
+          activity,
           completeProvider() {
             if (!completeProvider) throw new Error('provider has not started');
             completeProvider();
@@ -158,6 +173,7 @@ for (const kind of ['memory', 'postgres'] as const)
             const restarted = createServer(
               createServiceHandler(registry, {
                 assistantStore: pool ? new PostgresAssistantStore(pool) : store,
+                activityOutbox,
                 admissionGate,
                 requireAssistantExecutionAdmission: true,
                 assistantModelFetch: modelFetch,
@@ -252,6 +268,10 @@ for (const kind of ['memory', 'postgres'] as const)
         ]);
         const admitted = seen.filter((c) => c.assistantExecution);
         expect(admitted).toHaveLength(1);
+        expect(app.activity.map((e) => e.kind)).toEqual([
+          'assistant.turn.started',
+          'assistant.turn.finished',
+        ]);
         expect(admitted[0]).toMatchObject({
           ...TENANT,
           subject: 'member',
@@ -318,6 +338,11 @@ for (const kind of ['memory', 'postgres'] as const)
         await app.restart();
         expect((await app.request(token, 'turns', { ...turn, operationId })).status).toBe(409);
         expect(app.providerRequests).toHaveLength(requests);
+        expect(app.activity.map((e) => e.kind)).toEqual([
+          'assistant.turn.started',
+          'assistant.turn.finished',
+        ]);
+        expect(app.activity.at(-1)?.payload).toMatchObject({ outcome: 'failed' });
         expect(
           await (await app.request(token, 'operations/status', { operationId })).json(),
         ).toMatchObject({ status: 'unknown' });
@@ -391,6 +416,11 @@ for (const kind of ['memory', 'postgres'] as const)
           await (await app.request(token, 'operations/status', { operationId })).json(),
         ).toMatchObject({ status: 'completed' });
         expect(app.providerRequests).toHaveLength(2);
+        expect(app.activity.map((e) => e.kind)).toEqual([
+          'assistant.turn.started',
+          'assistant.turn.finished',
+        ]);
+        expect(app.activity.at(-1)?.payload).toMatchObject({ outcome: 'completed' });
       });
     },
   );

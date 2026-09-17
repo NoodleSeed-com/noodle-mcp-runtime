@@ -1,3 +1,4 @@
+export * from './activity-outbox.js';
 export * from './assistant-app-tool-usage.js';
 export * from './assistant-usage.js';
 export * from './intent-capture.js';
