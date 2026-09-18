@@ -66,6 +66,49 @@ describe('bounded assistant model requests', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(admit).toHaveBeenCalledOnce();
   });
+  it('preserves optional prefill and submission fields in Responses payloads', async () => {
+    const prefill = {
+      type: 'object',
+      properties: { name: { type: 'string' }, email: { type: 'string' } },
+      additionalProperties: false,
+    };
+    const parameters = [
+      { type: 'object', properties: { prefill }, additionalProperties: false },
+      {
+        type: 'object',
+        properties: { name: { type: 'string' }, email: { type: 'string' } },
+        required: ['email'],
+        additionalProperties: false,
+      },
+    ];
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) =>
+      Response.json({ output: [] }),
+    );
+    await requestModelCompletion({
+      binding: {
+        source: 'operator',
+        transport: 'responses',
+        baseUrl: 'https://models.example/v1',
+        model: 'responses-model',
+        apiKey: 'operator-secret',
+      },
+      messages: [{ role: 'user', content: 'Show the blank form.' }],
+      tools: parameters.map((schema, index) => ({
+        type: 'function',
+        function: { name: index === 0 ? 'show_form' : 'submit_form', parameters: schema },
+      })),
+      fetcher,
+    });
+    const payload = JSON.parse(String(fetcher.mock.calls[0]?.[1].body));
+    expect(payload.tools).toEqual([
+      { type: 'function', name: 'show_form', strict: false, parameters: parameters[0] },
+      { type: 'function', name: 'submit_form', strict: false, parameters: parameters[1] },
+    ]);
+    expect(payload.tools[0].parameters.required).toBeUndefined();
+    expect(payload.tools[0].parameters.properties.prefill.required).toBeUndefined();
+    expect(payload.tools[1].parameters.required).toEqual(['email']);
+  });
+
   it('uses the explicit Responses transport and maps its stream into the shared completion', async () => {
     const deltas: string[] = [];
     const fetcher = vi.fn(
@@ -142,6 +185,7 @@ describe('bounded assistant model requests', () => {
         {
           type: 'function',
           name: 'lookup',
+          strict: false,
           description: 'Look up a record.',
           parameters: { type: 'object' },
         },

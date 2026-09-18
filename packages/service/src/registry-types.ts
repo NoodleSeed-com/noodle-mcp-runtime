@@ -7,6 +7,7 @@ import type { AccessMode, OwnerTokenVerifier } from '@noodle-borg/transport-http
 import type { DeploymentAuthentication, DeploymentSource } from '@noodle-borg/wire-contracts';
 import type { AppPackageRenderer } from './app-package-snapshot.js';
 import type { DelegatedExchangeOptions } from './delegated-token-exchange.js';
+import type { DeploymentConnectors } from './deployment-connectors.js';
 import type { ExternalCredentialExchangeRuntimeOptions } from './external-credential-exchange.js';
 import type { GoogleWorkloadIdentityRuntimeOptions } from './google-workload-identity.js';
 import type { LocalDevtoolsDelegatedExchangeRuntime } from './local-devtools-delegated-exchange.js';
@@ -114,6 +115,7 @@ export interface AccessUpdateOptions {
 
 export interface ServerRegistryOptions {
   readonly nativeRecords?: NativeRecordConnectorFactory;
+  readonly deploymentConnectors?: DeploymentConnectors;
   /** Pure renderer injection used for deployment-bound package construction and failure testing. */
   readonly renderAppPackage?: AppPackageRenderer;
   readonly customerVerifierFactory?: (auth: TenantAuthConfig) => OwnerTokenVerifier;

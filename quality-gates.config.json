@@ -58,8 +58,8 @@
       {
         "path": "packages/assistant-gateway",
         "role": "library",
-        "maxSourceLines": 10061,
-        "reason": "One session lifecycle and turn-dispatch authority; keep continuity inside its existing release boundary. Requester-approved (2026-09-15): bounded durable assistant execution and separation of portable store contracts from the existing in-memory adapter. Conversation activity (2026-09-18): 39 lines for durable visible-turn identity and capture in the existing session store."
+        "maxSourceLines": 10077,
+        "reason": "One session lifecycle and turn-dispatch authority; keep continuity inside its existing release boundary. Requester-approved (2026-09-15): bounded durable assistant execution and separation of portable store contracts from the existing in-memory adapter. Conversation activity (2026-09-18): 39 lines for durable visible-turn identity and capture in the existing session store. Contact forms (2026-09-18): 16 lines for optional tool inputs and readable configured dropdown choices."
       },
       {
         "path": "packages/cli",
@@ -82,8 +82,8 @@
       {
         "path": "packages/service",
         "role": "composition",
-        "maxSourceLines": 65758,
-        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition. Public embed slice (2026-09-16): exact 117-line increase for trusted public session admission, deployment provenance and execution capability. Conversation activity (2026-09-18): 515 lines for portable outbox composition, tenant-scoped export and admitted turn/search capture.",
+        "maxSourceLines": 65798,
+        "reason": "Portable public runtime and control-plane composition; commercial imports remain forbidden. Founder-approved ADR 0233 amendment (2026-09-07) covers bounded reference capacity, onboarding and conservative recovery safeguards. Requester-approved (2026-09-15): bounded durable assistant operation admission and provider-policy HTTP composition. Public embed slice (2026-09-16): exact 117-line increase for trusted public session admission, deployment provenance and execution capability. Conversation activity (2026-09-18): 515 lines for portable outbox composition, tenant-scoped export and admitted turn/search capture. Contact forms (2026-09-18): 40 lines for a deployment-bound operator connector factory and admitted confirmation completion.",
         "modules": [
           {
             "path": "src/routes",

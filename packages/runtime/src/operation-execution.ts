@@ -564,7 +564,11 @@ function operationIdentity(
   tool: string,
   ref: ResolvedOperationRef,
   path: string,
-): Readonly<{ id: string }> {
+): Readonly<{
+  id: string;
+  toolName: string;
+  entrypointKind: NonNullable<ExecuteDeps['entrypointKind']>;
+}> {
   const invocation = (host as RuntimeHost)[INVOCATION];
   const location = JSON.stringify([hostCallStack(host), path]);
   const occurrence = invocation.occurrences.get(location) ?? 0;
@@ -578,7 +582,11 @@ function operationIdentity(
     location,
     occurrence,
   ];
-  return Object.freeze({ id: createHash('sha256').update(JSON.stringify(binding)).digest('hex') });
+  return Object.freeze({
+    id: createHash('sha256').update(JSON.stringify(binding)).digest('hex'),
+    toolName: tool,
+    entrypointKind: deps.entrypointKind ?? 'ambient',
+  });
 }
 
 function operationKey(ref: ResolvedOperationRef): string {

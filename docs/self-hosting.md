@@ -288,3 +288,15 @@ explicitly configure the runtime's [trusted proxy option](configuration.md#tls-t
 so it verifies the externally visible HTTPS resource audience. The default local Compose profile continues
 to ignore forwarding headers and needs no change. Proxy trust does not weaken issuer, signature, expiry,
 or tenant-audience checks, and it does not create or secure the reverse proxy itself.
+
+## Optional operator action connector
+
+The self-host composition can register `operator_actions@1.0.0` with the confirmed `submit_contact_form` operation. This is opt-in: ordinary runtime deployments need no action endpoint. Configure `NOODLE_ACTION_URL`, `NOODLE_ACTION_TOKEN` (32 random bytes encoded as canonical base64url), and a stable `NOODLE_RUNTIME_INSTANCE_ID`. Keep the action token separate from admission and administration tokens.
+
+For a local endpoint, explicitly set `NOODLE_ACTION_LOCAL_ORIGIN` to its exact loopback HTTP origin. For a managed endpoint, set `NOODLE_ACTION_GOOGLE_AUDIENCE` to its exact HTTPS Cloud Run origin instead. The two modes are mutually exclusive. The application credential uses `Authorization`; the audience-bound Google identity uses `X-Serverless-Authorization`. Redirects are refused. `NOODLE_ACTION_TIMEOUT_MS` defaults to 10000 and accepts 1–10000.
+
+The endpoint receives a versioned envelope containing runtime and execution identity, deployed organization/application/environment/deployment, tool name, the digest of the compiled values schema, and submitted values. It must validate its own current deployment binding, enforce the frozen schema, durably deduplicate by runtime/execution identity, and return only `{submissionId, receivedAt, environment}` after storage commits. Never accept the target or execution identity from authored tool arguments.
+
+The adapter requires an actual tool entrypoint named `submit_contact_form` with confirmation annotations; resources and prompts cannot inherit that authority by sharing its name. Interactive transports use their normal confirmation flow. An explicitly configured `confirmationFallback: 'host'` delegates approval to the calling MCP host on the stateless transport. It cannot prove that an arbitrary public client obtained human consent. Unknown dispatch outcomes must not be replayed as new submissions.
+
+Embedded service consumers can supply the generic `ServeServiceOptions.deploymentConnectors` port: its catalog participates in compilation and its factory receives the trusted tenant, compiled artifact and deployment identity. The factory is reapplied during deployment recovery and native-port rebinding. Operators own connector implementation and endpoint policy; authored applications cannot configure a privileged destination through this port.

@@ -22,10 +22,13 @@
     "@noodle-borg/auth": "workspace:*",
     "@noodle-borg/control-plane": "workspace:*",
     "@noodle-borg/service": "workspace:*",
-    "@noodle-borg/transport-http": "workspace:*"
+    "@noodle-borg/transport-http": "workspace:*",
+    "@noodle-borg/compiler": "workspace:*",
+    "@noodle-borg/runtime": "workspace:*"
   },
   "devDependencies": {
-    "@noodle-borg/runtime": "workspace:*",
-    "@types/node": "^24.13.1"
+    "@types/node": "^24.13.1",
+    "@noodle-borg/protocol": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

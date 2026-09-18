@@ -43,6 +43,8 @@ export function responsesInput(messages: readonly AssistantModelMessage[]): read
 export function responsesTools(tools: readonly AssistantModelTool[]): readonly unknown[] {
   return tools.map((tool) => ({
     type: 'function',
+    // Preserve canonical optional fields instead of Responses strict-mode normalization.
+    strict: false,
     name: tool.function.name,
     ...(tool.function.description === undefined ? {} : { description: tool.function.description }),
     parameters: tool.function.parameters,

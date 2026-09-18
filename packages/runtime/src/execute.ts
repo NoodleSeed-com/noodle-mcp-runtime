@@ -47,6 +47,8 @@ type FlowFulfilment = Extract<ArtifactFulfilment, { kind: 'flow' }>;
  * [ADR 0005](../../../docs/decisions/0005-runtime-execution-boundary.md)).
  */
 export interface ExecuteDeps {
+  /** Runtime entrypoint provenance, overwritten at tool/resource/prompt boundaries. */
+  readonly entrypointKind?: 'tool' | 'resource' | 'prompt' | 'ambient';
   readonly connectors: ConnectorRegistry;
   readonly broker: CredentialBroker;
   readonly policy?: PolicyGate;
@@ -146,7 +148,7 @@ export async function executeTool(
     tool.fulfilment,
     input,
     toolName,
-    { ...deps, env: variables.env },
+    { ...deps, env: variables.env, entrypointKind: 'tool' },
     deps.beforeDispatch,
   );
 }
@@ -174,7 +176,11 @@ export async function executeResource(
     await resolveEnv(deps),
   );
   if (!variables.ok) return variables;
-  return runFulfilment(resource.fulfilment, input, resourceName, { ...deps, env: variables.env });
+  return runFulfilment(resource.fulfilment, input, resourceName, {
+    ...deps,
+    env: variables.env,
+    entrypointKind: 'resource',
+  });
 }
 
 /**
@@ -199,7 +205,11 @@ export async function executePrompt(
     await resolveEnv(deps),
   );
   if (!variables.ok) return variables;
-  return runFulfilment(prompt.fulfilment, args, promptName, { ...deps, env: variables.env });
+  return runFulfilment(prompt.fulfilment, args, promptName, {
+    ...deps,
+    env: variables.env,
+    entrypointKind: 'prompt',
+  });
 }
 
 /**

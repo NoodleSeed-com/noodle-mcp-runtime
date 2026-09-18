@@ -233,6 +233,7 @@ export {
   createCustomerVerifierFactory,
   createFirebaseIdTokenVerifier,
 } from './customer-verifier.js';
+export type { DeploymentConnectors } from './deployment-connectors.js';
 export {
   DEVELOPER_MCP_PATH,
   type DeveloperMcpMountOptions,

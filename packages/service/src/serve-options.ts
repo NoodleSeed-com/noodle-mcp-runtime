@@ -7,6 +7,7 @@ import type {
 import type { WrappingMasterKey } from '@noodle-borg/runtime';
 import type { ModuleImporter, ModuleInput } from '@noodle-borg/service-modules';
 import type { ApplicationConnectionsOptions } from './application-connections.js';
+import type { DeploymentConnectors } from './deployment-connectors.js';
 import type { ExternalCredentialExchangeRuntimeOptions } from './external-credential-exchange.js';
 import type { LocalDevtoolsDelegatedCredentialSink } from './local-devtools-delegated-credentials.js';
 import type { LocalDevtoolsDelegatedExchangeRuntime } from './local-devtools-delegated-exchange.js';
@@ -17,6 +18,7 @@ import type { PostgresPool } from './store/cloudsql-pool.js';
 import type { ArtifactStore, TenantBridgeAuthConfig } from './store.js';
 
 export type ServeServiceOptions = ServiceOptions & {
+  readonly deploymentConnectors?: DeploymentConnectors;
   /** External mode validates the canonical schema; integrated OAuth and user modules are unsupported. */
   readonly schemaMode?: 'initialize' | 'external';
   /** Stable HMAC identity key; falls back to the existing business-source key or local master key. */

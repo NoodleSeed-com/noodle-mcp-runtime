@@ -28,6 +28,8 @@ export async function narrateResolvedInteraction(
   context: InvocationContext,
   suggestions = false,
 ): Promise<void> {
+  // Resolving an existing interaction does not admit a new model operation.
+  if (deps.requireAssistantExecutionAdmission) return;
   const startedAt = (deps.clock?.() ?? new Date()).toISOString();
   const monotonicStart = performance.now();
   try {

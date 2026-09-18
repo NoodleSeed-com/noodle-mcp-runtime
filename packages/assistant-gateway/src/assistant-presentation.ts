@@ -153,6 +153,20 @@ function presentationSchema(schema: JsonSchema, depth = 0): JsonSchema {
     if (typeof schema[key] === 'string') result[key] = schema[key].slice(0, 512);
   }
   if (Array.isArray(schema.enum)) result.enum = schema.enum.slice(0, 64);
+  if (Array.isArray(schema.oneOf)) {
+    result.oneOf = schema.oneOf.slice(0, 64).flatMap((choice) =>
+      isRecord(choice) &&
+      typeof choice.const === 'string' &&
+      choice.const.length <= MAX_STRING_LENGTH
+        ? [
+            {
+              const: choice.const,
+              ...(typeof choice.title === 'string' ? { title: choice.title.slice(0, 512) } : {}),
+            },
+          ]
+        : [],
+    );
+  }
   if (Array.isArray(schema.required)) result.required = schema.required.slice(0, 128);
   if (typeof schema.additionalProperties === 'boolean') {
     result.additionalProperties = schema.additionalProperties;

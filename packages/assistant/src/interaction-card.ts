@@ -172,6 +172,11 @@ function formatScalar(value: unknown, schema: ReviewSchema | undefined): string 
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') return new Intl.NumberFormat().format(value);
   if (typeof value !== 'string') return String(value);
+  if (Array.isArray(schema?.oneOf)) {
+    const choice = schema.oneOf.map(record).find((item) => item?.const === value);
+    const title = string(choice?.title);
+    if (title) return title;
+  }
   if (schema?.format === 'date') {
     const date = new Date(`${value}T00:00:00`);
     if (!Number.isNaN(date.valueOf()))

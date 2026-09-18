@@ -139,7 +139,11 @@ export interface ConnectorCallHost {
 export interface ConnectorCall {
   readonly operation: string;
   /** Runtime-generated, deployment/step-bound identity. Not a business input or recovery authority. */
-  readonly execution?: Readonly<{ readonly id: string }>;
+  readonly execution?: Readonly<{
+    readonly id: string;
+    readonly toolName?: string;
+    readonly entrypointKind?: 'tool' | 'resource' | 'prompt' | 'ambient';
+  }>;
   /** Connector/application-classified evidence; never infer completion from a transport status alone. */
   readonly reportOutcome?: (evidence: OperationEvidence) => void;
   readonly coordination?: OperationCoordinationSnapshot;

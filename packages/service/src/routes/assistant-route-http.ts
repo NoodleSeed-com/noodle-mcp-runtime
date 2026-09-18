@@ -41,11 +41,9 @@ export async function authenticateSession(
   }
   if (
     deps.requireAssistantExecutionAdmission &&
-    [
-      '/v1/assistant/suggestions',
-      '/v1/assistant/interactions',
-      '/v1/assistant/tool-confirmations',
-    ].includes(new URL(req.url ?? '/', 'http://assistant.invalid').pathname)
+    ['/v1/assistant/suggestions', '/v1/assistant/tool-confirmations'].includes(
+      new URL(req.url ?? '/', 'http://assistant.invalid').pathname,
+    )
   ) {
     applyBrowserCors(req, res, session.origin);
     sendJson(res, 403, { error: 'assistant action requires an execution operation' });

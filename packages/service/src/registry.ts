@@ -26,6 +26,7 @@ import {
   customerAuthAudienceConflictFailure,
   hasActiveCustomerAuthAudienceConflict,
 } from './customer-auth-audience-binding.js';
+import type { DeploymentConnectors } from './deployment-connectors.js';
 import {
   DeploymentLockedError,
   deploymentLockedConflict,
@@ -160,6 +161,7 @@ export class ServerRegistry {
   #platformCatalog: readonly CatalogConnector[];
   #platformConnectors: readonly Connector[];
   #nativeRecords: NativeRecordConnectorFactory | undefined;
+  #deploymentConnectors: DeploymentConnectors | undefined;
   readonly #stateHandleStoreFactory: StateHandleStoreFactory | undefined;
   readonly #delegatedCredentialStore:
     | Pick<OAuthStore, 'getDelegatedCredential' | 'putDelegatedCredential'>
@@ -199,6 +201,7 @@ export class ServerRegistry {
     this.#platformCatalog = withBuiltinStateCatalog(options.platformCatalog ?? []);
     this.#platformConnectors = options.platformConnectors ?? [];
     this.#nativeRecords = options.nativeRecords;
+    this.#deploymentConnectors = options.deploymentConnectors;
     this.#stateHandleStoreFactory = options.stateHandleStoreFactory;
     this.#delegatedCredentialStore = options.delegatedCredentialStore;
     this.#sealCustomerCredential = options.sealCustomerCredential;
@@ -502,6 +505,9 @@ export class ServerRegistry {
         stateHandleStoreFactory: this.#stateHandleStoreFactory,
         platformConnectors: this.#platformConnectors,
         nativeRecords: this.#nativeRecords,
+        ...(this.#deploymentConnectors === undefined
+          ? {}
+          : { deploymentConnectors: this.#deploymentConnectors }),
         policyGate: this.#policyGate,
         appPackageRenderer: this.#appPackageRenderer,
         knowledgeSearch: this.#knowledgeSearch,

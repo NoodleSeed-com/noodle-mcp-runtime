@@ -302,9 +302,10 @@ for (const kind of ['memory', 'postgres'] as const)
           (await app.request(token, 'operations', { requestKey: randomUUID(), turn })).status,
         ).toBe(201);
       });
-      it('refuses unkeyed turns, resume, suggestions, interactions and doctor without provider I/O', async () => {
+      it('refuses unkeyed turns, legacy actions, malformed interactions and doctor without provider I/O', async () => {
         const app = await start();
         const { token } = await (await app.mint()).json();
+        // Modern confirmation resolution validates its body; it is no longer blanket-denied.
         for (const [path, body] of [
           ['turns', { message: 'hello' }],
           ['turns', { resume: true }],
@@ -312,7 +313,9 @@ for (const kind of ['memory', 'postgres'] as const)
           ['interactions', {}],
           ['tool-confirmations', {}],
         ] as const)
-          expect((await app.request(token, path, body)).status).toBe(403);
+          expect((await app.request(token, path, body)).status).toBe(
+            path === 'interactions' ? 400 : 403,
+          );
         const doctor = await fetch(
           `${app.base}/v1/orgs/acme/apps/support/envs/test/assistant/doctor`,
           { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },

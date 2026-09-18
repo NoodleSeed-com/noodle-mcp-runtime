@@ -3,6 +3,47 @@ import { describe, expect, it, vi } from 'vitest';
 import { createInteractionCard } from '../src/interaction-card.js';
 
 describe('business-readable confirmation card', () => {
+  it('displays named choice titles while preserving submitted IDs and unmatched values', () => {
+    const arguments_ = { values: { interest: 'option-123', unmatched: 'option-unknown' } };
+    const respond = vi.fn(async () => {});
+    const card = createInteractionCard({
+      tool: 'submit_form',
+      arguments: arguments_,
+      reviewSchema: {
+        type: 'object',
+        properties: {
+          values: {
+            type: 'object',
+            properties: {
+              interest: {
+                type: 'string',
+                oneOf: [{ const: 'option-123', title: 'Priority support' }],
+              },
+              unmatched: {
+                type: 'string',
+                oneOf: [{ const: 'option-123', title: 'Priority support' }],
+              },
+            },
+          },
+        },
+      },
+      labels: {
+        heading: 'Review and confirm',
+        accept: 'Confirm',
+        decline: "Don't proceed",
+        details: 'Additional details',
+        redacted: 'Hidden for security',
+      },
+      respond,
+    });
+    expect(card.textContent).toContain('Priority support');
+    expect(card.textContent).not.toContain('option-123');
+    expect(card.textContent).toContain('option-unknown');
+    expect(arguments_.values.interest).toBe('option-123');
+    card.querySelector<HTMLButtonElement>('.proposal-accept')?.click();
+    expect(respond).toHaveBeenCalledWith('accept');
+  });
+
   it('keeps Additional details hidden when the option is omitted', () => {
     const card = createInteractionCard({
       tool: 'complete_task',

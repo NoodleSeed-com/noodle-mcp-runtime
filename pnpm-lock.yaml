@@ -60,9 +60,15 @@ importers:
       '@noodle-borg/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@noodle-borg/compiler':
+        specifier: workspace:*
+        version: link:../../packages/compiler
       '@noodle-borg/control-plane':
         specifier: workspace:*
         version: link:../../packages/control-plane
+      '@noodle-borg/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@noodle-borg/service':
         specifier: workspace:*
         version: link:../../packages/service
@@ -70,14 +76,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/transport-http
     devDependencies:
-      '@noodle-borg/runtime':
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
+      '@noodle-borg/protocol':
         specifier: workspace:*
-        version: link:../../packages/runtime
+        version: link:../../packages/protocol
       '@types/node':
         specifier: ^24.13.1
         version: 24.13.1
-
-
 
   packages/admission-limits:
     dependencies:

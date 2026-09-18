@@ -106,7 +106,7 @@ describe('embedded assistant interactions', () => {
     );
   });
 
-  async function start(initialNow = new Date('2030-01-01T00:00:00.000Z')) {
+  async function start(initialNow = new Date('2030-01-01T00:00:00.000Z'), protectedMode = false) {
     let currentNow = initialNow;
     const registry = new ServerRegistry();
     const tenant = { org: 'acme', app: 'support', env: 'prod' };
@@ -133,9 +133,20 @@ describe('embedded assistant interactions', () => {
     if (!deployed.ok) throw new Error(JSON.stringify(deployed.errors));
     const modelFetch = vi.fn<typeof fetch>();
     const audit = new InMemoryAuditStore({ now: () => currentNow });
+    const store = new InMemoryAssistantStore();
+    let interactionAllowed = true;
     const server = createServer(
       createServiceHandler(registry, {
-        assistantStore: new InMemoryAssistantStore(),
+        assistantStore: store,
+        ...(protectedMode
+          ? {
+              requireAssistantExecutionAdmission: true,
+              admissionGate: async (context: { method: string }) =>
+                context.method === 'assistant/interactions' && !interactionAllowed
+                  ? { allow: false as const, reason: 'interaction_disabled' }
+                  : { allow: true as const },
+            }
+          : {}),
         assistantModelFetch: modelFetch,
         audit,
         clock: () => currentNow,
@@ -172,6 +183,10 @@ describe('embedded assistant interactions', () => {
       modelFetch,
       registry,
       createSession,
+      store,
+      setInteractionAllowed(value: boolean) {
+        interactionAllowed = value;
+      },
       setNow(value: Date) {
         currentNow = value;
       },
@@ -239,6 +254,104 @@ describe('embedded assistant interactions', () => {
       'content-type': 'application/json',
     };
   }
+
+  async function proposeFromWidget(base: string, token: string) {
+    const response = await fetch(`${base}/v1/assistant/apps`, {
+      method: 'POST',
+      headers: headers(token),
+      body: JSON.stringify({
+        method: 'tools/call',
+        params: { name: 'set_nickname', arguments: { nickname: 'Noodle' } },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.interaction.event).toBe('tool_proposed');
+    return body.interaction.data.id as string;
+  }
+
+  it('protected mode accepts and replays a durable widget confirmation without model calls', async () => {
+    const { base, createSession, modelFetch } = await start(undefined, true);
+    const session = await createSession('customer-1');
+    const id = await proposeFromWidget(base, session.token);
+    for (const replay of [false, true]) {
+      const response = await fetch(session.endpoints.interactions, {
+        method: 'POST',
+        headers: headers(session.token),
+        body: JSON.stringify({ id, action: 'accept', suggestions: true }),
+      });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).toContain('event: tool_completed');
+      expect(text).toContain('"nickname":"Noodle"');
+      if (replay) expect(text).toContain('"replayed":true');
+      expect(text).not.toContain('event: content');
+      expect(modelFetch).not.toHaveBeenCalled();
+    }
+    for (const route of ['suggestions', 'tool-confirmations']) {
+      const response = await fetch(`${base}/v1/assistant/${route}`, {
+        method: 'POST',
+        headers: headers(session.token),
+        body: JSON.stringify({ id, action: 'accept' }),
+      });
+      expect(response.status).toBe(403);
+    }
+    expect(modelFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'decline',
+    'cancel',
+  ] as const)('protected mode preserves operator and session denial before %s without model calls', async (action) => {
+    const { base, createSession, modelFetch, setInteractionAllowed } = await start(undefined, true);
+    const session = await createSession('customer-1');
+    const other = await createSession('customer-2');
+    const id = await proposeFromWidget(base, session.token);
+    const resolve = (token: string, decision: string) =>
+      fetch(session.endpoints.interactions, {
+        method: 'POST',
+        headers: headers(token),
+        body: JSON.stringify({ id, action: decision, suggestions: true }),
+      });
+    setInteractionAllowed(false);
+    const denied = await resolve(session.token, 'accept');
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: 'assistant_admission_denied' });
+    setInteractionAllowed(true);
+    expect((await resolve(other.token, 'accept')).status).toBe(409);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const stopped = await resolve(session.token, action);
+      expect(stopped.status).toBe(200);
+      const text = await stopped.text();
+      expect(text).toContain('event: interaction_resolved');
+      expect(text).not.toContain('event: tool_completed');
+    }
+    expect((await resolve(session.token, 'accept')).status).toBe(409);
+    expect(modelFetch).not.toHaveBeenCalled();
+  });
+
+  it('protected mode does not reexecute an interaction with an unknown outcome', async () => {
+    const now = new Date('2030-01-01T00:00:00.000Z');
+    const { base, createSession, modelFetch, store } = await start(now, true);
+    const session = await createSession('customer-1');
+    const id = await proposeFromWidget(base, session.token);
+    const record = await store.getSession(session.token, now);
+    if (!record) throw new Error('Missing session');
+    await store.claimInteraction({
+      id,
+      sessionId: record.id,
+      deploymentId: record.deploymentId,
+      now,
+    });
+    const response = await fetch(session.endpoints.interactions, {
+      method: 'POST',
+      headers: headers(session.token),
+      body: JSON.stringify({ id, action: 'accept', suggestions: true }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'interaction_outcome_unknown' });
+    expect(modelFetch).not.toHaveBeenCalled();
+  });
 
   it('advertises and preflights the additive interactions endpoint', async () => {
     const { base, createSession } = await start();

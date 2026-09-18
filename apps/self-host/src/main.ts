@@ -12,9 +12,9 @@ import {
   serveService,
 } from '@noodle-borg/service';
 import { createLogger, type Logger } from '@noodle-borg/transport-http';
-
 import { SelfHostAdminGate } from './admin-gate.js';
 import { resolveSelfHostConfig, resolveSelfHostMigrationConfig } from './config.js';
+import { createHttpActionConnectors } from './http-actions.js';
 import { createHttpAdmissionGate } from './http-admission.js';
 import { ownerAuthOptions } from './owner-auth.js';
 
@@ -81,6 +81,9 @@ export async function startSelfHostService(
     protocolMode: 'dual',
   } as const;
   const running = await dependencies.serve({
+    ...(config.actions === undefined
+      ? {}
+      : { deploymentConnectors: createHttpActionConnectors(config.actions) }),
     host: config.host,
     port: config.port,
     publicBaseUrl: config.publicBaseUrl,

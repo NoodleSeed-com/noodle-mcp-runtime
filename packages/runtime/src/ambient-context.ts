@@ -40,6 +40,7 @@ export async function executeAmbientContext(
         };
   const providerDeps: ExecuteDeps = {
     ...deps,
+    entrypointKind: 'ambient',
     env: variables.env,
     ...(providerContext !== undefined ? { context: providerContext } : {}),
   };

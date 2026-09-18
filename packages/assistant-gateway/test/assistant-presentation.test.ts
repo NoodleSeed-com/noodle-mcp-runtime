@@ -159,6 +159,38 @@ describe('assistant interaction presentation', () => {
     });
   });
 
+  it('preserves bounded named string choices in the confirmation schema without changing values', () => {
+    const choices = Array.from({ length: 65 }, (_, index) => ({
+      const: `option-${index}`,
+      title: index === 0 ? 'Priority support' : `Option ${index}`,
+      description: 'Not part of named-choice presentation',
+    }));
+    const review = assistantArgumentReview(
+      {
+        type: 'object',
+        properties: {
+          interest: { type: 'string', oneOf: choices },
+          longLabel: { type: 'string', oneOf: [{ const: 'stable-id', title: 'x'.repeat(600) }] },
+        },
+      },
+      { interest: 'option-0', longLabel: 'stable-id' },
+    );
+    expect(review).toMatchObject({
+      ok: true,
+      value: { interest: 'option-0', longLabel: 'stable-id' },
+    });
+    if (!review.ok) return;
+    expect(review.reviewSchema).toMatchObject({
+      properties: {
+        interest: {
+          oneOf: choices.slice(0, 64).map(({ const: value, title }) => ({ const: value, title })),
+        },
+        longLabel: { oneOf: [{ const: 'stable-id', title: 'x'.repeat(512) }] },
+      },
+    });
+    expect(JSON.stringify(review.reviewSchema)).not.toContain('Not part of named-choice');
+  });
+
   it('adds portable display metadata while preserving legacy proposal arguments', () => {
     const review = assistantArgumentReview(
       { type: 'object', properties: { visible: { type: 'string', title: 'Visible value' } } },

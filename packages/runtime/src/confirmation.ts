@@ -64,7 +64,7 @@ export async function prepareToolForConfirmation(
   );
   if (!variables.ok) return { status: 'failed', error: variables.error };
   deps = { ...deps, env: variables.env };
-  const invocationDeps = withConnectorSnapshot(deps);
+  const invocationDeps = withConnectorSnapshot({ ...deps, entrypointKind: 'tool' });
   const preflightError = preflightFulfilmentSignatures(tool.fulfilment, invocationDeps.connectors);
   if (preflightError) return { status: 'failed', error: preflightError };
   const routeError = preflightFulfilmentCustomerRoutes(
@@ -141,7 +141,7 @@ export async function resumeToolPreparation(
   if (tool?.fulfilment.kind !== 'flow') {
     return failPreparation('invalid_continuation', 'continued tool is unavailable');
   }
-  const invocationDeps = withConnectorSnapshot(deps);
+  const invocationDeps = withConnectorSnapshot({ ...deps, entrypointKind: 'tool' });
   const preflightError = preflightFulfilmentSignatures(tool.fulfilment, invocationDeps.connectors);
   if (preflightError) return { status: 'failed', error: preflightError };
   const routeError = preflightFulfilmentCustomerRoutes(
@@ -210,7 +210,7 @@ export async function executePreparedTool(
     'tool input',
   );
   if (inputError) return { status: 'failed', error: inputError };
-  const invocationDeps = withConnectorSnapshot(deps);
+  const invocationDeps = withConnectorSnapshot({ ...deps, entrypointKind: 'tool' });
   const preflightError = preflightFulfilmentSignatures(tool.fulfilment, invocationDeps.connectors);
   if (preflightError) return { status: 'failed', error: preflightError };
   if (tool.fulfilment.kind === 'operation') {

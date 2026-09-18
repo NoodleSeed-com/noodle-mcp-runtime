@@ -485,3 +485,28 @@ it('requires external admission for the explicit default-off model execution mod
     }).requireAssistantExecutionAdmission,
   ).toBe(true);
 });
+
+it('enables operator actions only with complete, explicit transport configuration', () => {
+  const token = Buffer.from(Array.from({ length: 32 }, (_, index) => index)).toString('base64url');
+  expect(resolveSelfHostConfig(validEnvironment()).actions).toBeUndefined();
+  const action = {
+    NOODLE_ACTION_URL: 'http://127.0.0.1:9082/internal/runtime/contact-submissions',
+    NOODLE_ACTION_TOKEN: token,
+    NOODLE_ACTION_LOCAL_ORIGIN: 'http://127.0.0.1:9082',
+    NOODLE_RUNTIME_INSTANCE_ID: 'local',
+  };
+  expect(resolveSelfHostConfig({ ...validEnvironment(), ...action }).actions).toMatchObject({
+    runtimeInstanceId: 'local',
+    localOrigin: 'http://127.0.0.1:9082',
+    token,
+  });
+  expect(() =>
+    resolveSelfHostConfig({ ...validEnvironment(), ...action, NOODLE_ACTION_TOKEN: '' }),
+  ).toThrow();
+  expect(() =>
+    resolveSelfHostConfig({ ...validEnvironment(), ...action, NOODLE_ACTION_LOCAL_ORIGIN: '' }),
+  ).toThrow();
+  expect(() =>
+    resolveSelfHostConfig({ ...validEnvironment(), ...action, NOODLE_ACTION_TIMEOUT_MS: '10001' }),
+  ).toThrow();
+});

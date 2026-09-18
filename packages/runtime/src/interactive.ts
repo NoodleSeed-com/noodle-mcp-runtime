@@ -43,7 +43,7 @@ export async function executeToolInteractive(
     toolName,
   );
   if (!variables.ok) return { status: 'failed', error: variables.error };
-  deps = { ...deps, env: variables.env };
+  deps = { ...deps, env: variables.env, entrypointKind: 'tool' };
   if (tool.fulfilment.kind !== 'flow' || !tool.fulfilment.steps.some((s) => s.kind === 'elicit')) {
     return toInteractive(
       await runFulfilment(tool.fulfilment, input, toolName, deps, deps.beforeDispatch),
@@ -119,6 +119,7 @@ async function runInteractiveFlow(
   env: Record<string, unknown>,
   deps: ExecuteToolDeps,
 ): Promise<InteractiveExecutionResult> {
+  deps = { ...deps, entrypointKind: 'tool' };
   const policy = deps.policy ?? new AllowAllPolicy();
   const dispatchAdmission = latchToolDispatchAdmission(deps.beforeDispatch, deps.signal);
   const host = createHost(toolName, deps, policy, env, [], dispatchAdmission);

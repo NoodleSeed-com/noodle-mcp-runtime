@@ -1,7 +1,9 @@
 import { isAbsolute, normalize, parse } from 'node:path';
+import { type HttpActionConfig, validateActionConfig } from './http-actions.js';
 
 export interface SelfHostConfig {
   readonly databaseUrl: string;
+  readonly actions?: HttpActionConfig;
   readonly activityCaptureEnabled: boolean;
   readonly requireAssistantExecutionAdmission: boolean;
   readonly secretMasterKey: string;
@@ -37,6 +39,12 @@ export interface SelfHostConfig {
 type Environment = Readonly<Record<string, string | undefined>>;
 
 const KNOWN_NOODLE_VARIABLES = new Set([
+  'NOODLE_ACTION_URL',
+  'NOODLE_ACTION_TOKEN',
+  'NOODLE_ACTION_GOOGLE_AUDIENCE',
+  'NOODLE_ACTION_LOCAL_ORIGIN',
+  'NOODLE_ACTION_TIMEOUT_MS',
+  'NOODLE_RUNTIME_INSTANCE_ID',
   'NOODLE_BUILD_VERSION',
   'NOODLE_BUILD_SHA',
   'NOODLE_BUILD_TIME',
@@ -123,6 +131,7 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
 
   const ownerAuth = resolveOwnerAuth(env);
   const admission = resolveAdmission(env);
+  const actions = resolveActions(env);
   const executionSetting = env.NOODLE_ASSISTANT_EXECUTION_ADMISSION;
   if (executionSetting !== undefined && executionSetting !== 'true' && executionSetting !== 'false')
     throw configurationError('NOODLE_ASSISTANT_EXECUTION_ADMISSION must be true or false');
@@ -145,6 +154,7 @@ export function resolveSelfHostConfig(env: Environment): SelfHostConfig {
     throw configurationError('Activity capture requires externally migrated schema');
   return {
     databaseUrl,
+    ...(actions === undefined ? {} : { actions }),
     activityCaptureEnabled: activityCapture === 'true',
     requireAssistantExecutionAdmission,
     secretMasterKey,
@@ -431,4 +441,40 @@ export function resolveSelfHostMigrationConfig(env: Environment): { databaseUrl:
   const databaseUrl = required(env, 'DATABASE_URL');
   validateDatabaseUrl(databaseUrl);
   return { databaseUrl };
+}
+
+function resolveActions(env: Environment): HttpActionConfig | undefined {
+  const names = [
+    'NOODLE_ACTION_URL',
+    'NOODLE_ACTION_TOKEN',
+    'NOODLE_ACTION_GOOGLE_AUDIENCE',
+    'NOODLE_ACTION_LOCAL_ORIGIN',
+    'NOODLE_ACTION_TIMEOUT_MS',
+    'NOODLE_RUNTIME_INSTANCE_ID',
+  ];
+  if (names.every((name) => optional(env, name) === undefined)) return undefined;
+  const token = required(env, 'NOODLE_ACTION_TOKEN');
+  if (
+    !/^[A-Za-z0-9_-]{43}$/.test(token) ||
+    Buffer.from(token, 'base64url').toString('base64url') !== token ||
+    new Set(Buffer.from(token, 'base64url')).size < 2
+  )
+    throw configurationError(
+      'NOODLE_ACTION_TOKEN must be a generated 32-byte canonical base64url secret',
+    );
+  const googleAudience = optional(env, 'NOODLE_ACTION_GOOGLE_AUDIENCE');
+  const localOrigin = optional(env, 'NOODLE_ACTION_LOCAL_ORIGIN');
+  const timeout = optional(env, 'NOODLE_ACTION_TIMEOUT_MS');
+  if (timeout !== undefined && !/^\d+$/.test(timeout))
+    throw configurationError('NOODLE_ACTION_TIMEOUT_MS must be an integer');
+  const config: HttpActionConfig = {
+    url: required(env, 'NOODLE_ACTION_URL'),
+    token,
+    runtimeInstanceId: required(env, 'NOODLE_RUNTIME_INSTANCE_ID'),
+    ...(googleAudience === undefined ? {} : { googleAudience }),
+    ...(localOrigin === undefined ? {} : { localOrigin }),
+    ...(timeout === undefined ? {} : { timeoutMs: Number(timeout) }),
+  };
+  validateActionConfig(config);
+  return config;
 }

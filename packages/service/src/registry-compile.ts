@@ -36,6 +36,7 @@ import { missingServerConfigErrors } from './assistant-bindings.js';
 import { normalizePersistedConnectorsForCompile } from './connector-normalize.js';
 import { ManagedConfigBroker } from './credential-broker.js';
 import { deploymentCredentialBrokerOptions } from './credential-broker-options.js';
+import type { DeploymentConnectors } from './deployment-connectors.js';
 import { deploymentRecordVersionError } from './deployment-record-version.js';
 import { normalizePersistedManifestForCompile } from './manifest-normalize.js';
 import type { NativeRecordConnectorFactory } from './native-record-connector.js';
@@ -79,6 +80,7 @@ interface RegistryCompileContext {
   readonly stateHandleStoreFactory: StateHandleStoreFactory | undefined;
   readonly platformConnectors: readonly Connector[];
   readonly nativeRecords: NativeRecordConnectorFactory | undefined;
+  readonly deploymentConnectors?: DeploymentConnectors;
   readonly policyGate: PolicyGate | undefined;
   readonly appPackageRenderer: AppPackageRenderer | undefined;
   readonly knowledgeSearch: KnowledgeSearchPortFactory | undefined;
@@ -146,15 +148,20 @@ export async function compileRegistryTarget(
   if (connectors !== undefined && connectors.trim() !== '') {
     const cc = compileConnectors(connectors);
     if (!cc.ok) return { ok: false, errors: cc.errors };
-    if (cc.catalog.some((entry) => entry.id === RECORD_CONNECTOR_ID))
+    if (
+      cc.catalog.some(
+        (entry) =>
+          entry.id === RECORD_CONNECTOR_ID ||
+          context.deploymentConnectors?.catalog.some((owned) => owned.id === entry.id),
+      )
+    )
       return {
         ok: false,
         errors: [
           {
             code: 'reserved_connector',
             path: 'connectors',
-            message:
-              'The native record connector is platform-owned and cannot be supplied by an application.',
+            message: 'Operator-owned connectors cannot be supplied by an application.',
           },
         ],
       };
@@ -169,7 +176,11 @@ export async function compileRegistryTarget(
     env: tenant.env,
   });
   const compiled = compile(normalizePersistedManifestForCompile(manifest), {
-    catalog: new InMemoryCatalog([...context.platformCatalog, ...catalogConnectors]),
+    catalog: new InMemoryCatalog([
+      ...context.platformCatalog,
+      ...(context.deploymentConnectors?.catalog ?? []),
+      ...catalogConnectors,
+    ]),
     ...(hostedAssets !== undefined && hostedAssets.length > 0
       ? { hostedAssets: { assets: hostedAssets } }
       : context.localAssetOptions !== undefined
@@ -353,6 +364,11 @@ export async function compileRegistryTarget(
       deps: {
         connectors: new InMemoryConnectorRegistry([
           ...context.platformConnectors,
+          ...(context.deploymentConnectors?.create({
+            tenant,
+            artifact,
+            ...(boundDeploymentId === undefined ? {} : { deploymentId: boundDeploymentId }),
+          }) ?? []),
           ...(nativeRecords === undefined ? [] : [nativeRecords]),
           ...(stateConnector !== undefined ? [stateConnector] : []),
           ...httpConnectors,

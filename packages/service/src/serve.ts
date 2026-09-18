@@ -127,12 +127,9 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
   assertLocalDevtoolsServiceBoundary(host, options);
   let gate = options.deployGate;
 
-  const durableStoreRequested =
-    options.dataDir !== undefined ||
-    options.databaseUrl !== undefined ||
-    options.postgresPool !== undefined;
   const postgresStoreRequested =
     options.databaseUrl !== undefined || options.postgresPool !== undefined;
+  const durableStoreRequested = options.dataDir !== undefined || postgresStoreRequested;
   if (options.databaseUrl !== undefined && options.postgresPool !== undefined) {
     throw new Error('configure either databaseUrl or postgresPool, not both');
   }
@@ -604,6 +601,9 @@ export async function serveService(options: ServeServiceOptions = {}): Promise<R
       options.externalCredentialExchange ??
       (connectionRuntime ? { localProvider: connectionRuntime.localProvider } : undefined);
     registry = new ServerRegistry(store, secretBox, configStore, {
+      ...(options.deploymentConnectors === undefined
+        ? {}
+        : { deploymentConnectors: options.deploymentConnectors }),
       customerVerifierFactory:
         options.localDevtoolsDirectFirebaseAuth === true ||
         options.localDevtoolsDirectMicrosoftAuth === true
