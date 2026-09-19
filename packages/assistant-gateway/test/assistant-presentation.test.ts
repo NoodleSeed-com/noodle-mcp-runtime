@@ -251,6 +251,76 @@ describe('assistant interaction presentation', () => {
     ).toEqual({ markets });
   });
 
+  it('preserves nested menu modifier prices while still redacting sensitive output', () => {
+    const output = {
+      data: {
+        items: [
+          {
+            modifierLists: [
+              {
+                modifiers: [
+                  {
+                    name: 'Extra tofu',
+                    price: { amount: 200, currency: 'USD' },
+                    apiKey: 'private-value',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+    expect(assistantSafeOutput(undefined, output)).toEqual({
+      data: {
+        items: [
+          {
+            modifierLists: [
+              {
+                modifiers: [
+                  {
+                    name: 'Extra tofu',
+                    price: { amount: 200, currency: 'USD' },
+                    apiKey: '[REDACTED]',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it('bounds deeply nested output independently of the stricter approval limit', () => {
+    let value: unknown = { leaf: 'value' };
+    for (let i = 0; i < 12; i++) value = { child: value };
+    expect(JSON.stringify(assistantSafeOutput(undefined, value))).toContain(
+      '[TRUNCATED: maximum depth]',
+    );
+    expect(assistantArgumentReview({}, value)).toEqual({
+      ok: false,
+      code: 'arguments_not_presentable',
+    });
+  });
+
+  it('distinguishes shared sibling references from cycles and isolates successive projections', () => {
+    const shared = { label: 'Same choice' };
+    const cyclic: Record<string, unknown> = { shared };
+    cyclic.self = cyclic;
+    expect(assistantSafeOutput(undefined, cyclic)).toEqual({
+      shared,
+      self: '[TRUNCATED: cycle]',
+    });
+    expect(assistantArgumentReview({}, cyclic)).toEqual({
+      ok: false,
+      code: 'arguments_not_presentable',
+    });
+    const siblings = { first: shared, second: shared, list: [shared, shared] };
+    expect(assistantArgumentReview({}, siblings)).toMatchObject({ ok: true, value: siblings });
+    expect(assistantSafeOutput(undefined, siblings)).toEqual(siblings);
+  });
+
   it('preserves 500 compact entries within the temporary presentation ceiling', () => {
     const entries = Array.from({ length: 500 }, (_, index) => ({ id: index }));
 

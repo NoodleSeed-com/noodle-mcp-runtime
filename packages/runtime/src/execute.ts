@@ -47,6 +47,8 @@ type FlowFulfilment = Extract<ArtifactFulfilment, { kind: 'flow' }>;
  * [ADR 0005](../../../docs/decisions/0005-runtime-execution-boundary.md)).
  */
 export interface ExecuteDeps {
+  /** Verified persisted assistant session identity. Private host authority, never expression input. */
+  readonly assistantSessionId?: string;
   /** Runtime entrypoint provenance, overwritten at tool/resource/prompt boundaries. */
   readonly entrypointKind?: 'tool' | 'resource' | 'prompt' | 'ambient';
   readonly connectors: ConnectorRegistry;

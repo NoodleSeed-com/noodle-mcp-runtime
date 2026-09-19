@@ -3,7 +3,9 @@ import { isCredentialShapedAssistantText } from './assistant-sensitive-values.js
 
 const MAX_REVIEW_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024;
+// Reviews stay shallow and exact; catalog output needs room for nested options and money.
 const MAX_DEPTH = 8;
+const MAX_OUTPUT_DEPTH = 12;
 const MAX_REVIEW_CONTAINER_ENTRIES = 128;
 const MAX_OUTPUT_CONTAINER_ENTRIES = 512;
 const MAX_STRING_LENGTH = 2_048;
@@ -127,11 +129,14 @@ function boundedProjection(
   value: unknown,
   label: 'REVIEW' | 'OUTPUT',
 ): { readonly value: unknown; readonly complete: boolean } {
+  // Each projection owns its traversal state; recursive calls cannot switch policy mid-tree.
   const state = { complete: true };
+  const ancestors = new Set<object>();
   const maxBytes = label === 'REVIEW' ? MAX_REVIEW_BYTES : MAX_OUTPUT_BYTES;
   const maxContainerEntries =
     label === 'REVIEW' ? MAX_REVIEW_CONTAINER_ENTRIES : MAX_OUTPUT_CONTAINER_ENTRIES;
-  const projected = project(schema, value, 0, new Set<object>(), state, maxContainerEntries);
+  const maxDepth = label === 'REVIEW' ? MAX_DEPTH : MAX_OUTPUT_DEPTH;
+  const projected = project(schema, value, 0);
   try {
     const encoded = JSON.stringify(projected);
     if (new TextEncoder().encode(encoded).byteLength <= maxBytes) {
@@ -144,6 +149,66 @@ function boundedProjection(
     value: { notice: `[${label} OMITTED: exceeds ${maxBytes / 1024} KiB]` },
     complete: false,
   };
+
+  function project(schema: JsonSchema | undefined, value: unknown, depth: number): unknown {
+    if (isSensitiveSchema(schema)) return '[REDACTED]';
+    if (typeof value === 'string') {
+      if (isCredentialShapedAssistantText(value)) {
+        state.complete = false;
+        return '[REDACTED]';
+      }
+      if (value.length <= MAX_STRING_LENGTH) return value;
+      state.complete = false;
+      return `${value.slice(0, MAX_STRING_LENGTH)}…[TRUNCATED]`;
+    }
+    if (value === null || typeof value === 'boolean') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (value === undefined || typeof value !== 'object') {
+      state.complete = false;
+      return '[UNPRESENTABLE]';
+    }
+    if (depth >= maxDepth) {
+      state.complete = false;
+      return '[TRUNCATED: maximum depth]';
+    }
+    if (ancestors.has(value)) {
+      state.complete = false;
+      return '[TRUNCATED: cycle]';
+    }
+
+    ancestors.add(value);
+    if (Array.isArray(value)) {
+      const itemSchema = recordValue(schema?.items);
+      const result = value
+        .slice(0, maxContainerEntries)
+        .map((entry) => project(itemSchema, entry, depth + 1));
+      if (value.length > maxContainerEntries) {
+        state.complete = false;
+        result.push('[TRUNCATED: more entries]');
+      }
+      ancestors.delete(value);
+      return result;
+    }
+
+    const properties = recordValue(schema?.properties);
+    const result: Record<string, unknown> = Object.create(null);
+    const entries = Object.entries(value).slice(0, maxContainerEntries);
+    for (const [key, entry] of entries) {
+      const propertySchema = ownRecordValue(properties, key);
+      if (SENSITIVE_KEY.test(key) && !isSensitiveSchema(propertySchema)) {
+        state.complete = false;
+        result[key] = '[REDACTED]';
+      } else {
+        result[key] = project(propertySchema, entry, depth + 1);
+      }
+    }
+    if (Object.keys(value).length > maxContainerEntries) {
+      state.complete = false;
+      result._truncated = '[TRUNCATED: more properties]';
+    }
+    ancestors.delete(value);
+    return result;
+  }
 }
 
 function presentationSchema(schema: JsonSchema, depth = 0): JsonSchema {
@@ -196,80 +261,6 @@ function presentationSchema(schema: JsonSchema, depth = 0): JsonSchema {
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function project(
-  schema: JsonSchema | undefined,
-  value: unknown,
-  depth: number,
-  ancestors: Set<object>,
-  state: { complete: boolean },
-  maxContainerEntries: number,
-): unknown {
-  if (isSensitiveSchema(schema)) return '[REDACTED]';
-  if (typeof value === 'string') {
-    if (isCredentialShapedAssistantText(value)) {
-      state.complete = false;
-      return '[REDACTED]';
-    }
-    if (value.length <= MAX_STRING_LENGTH) return value;
-    state.complete = false;
-    return `${value.slice(0, MAX_STRING_LENGTH)}…[TRUNCATED]`;
-  }
-  if (value === null || typeof value === 'boolean') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (value === undefined || typeof value !== 'object') {
-    state.complete = false;
-    return '[UNPRESENTABLE]';
-  }
-  if (depth >= MAX_DEPTH) {
-    state.complete = false;
-    return '[TRUNCATED: maximum depth]';
-  }
-  if (ancestors.has(value)) {
-    state.complete = false;
-    return '[TRUNCATED: cycle]';
-  }
-
-  ancestors.add(value);
-  if (Array.isArray(value)) {
-    const itemSchema = recordValue(schema?.items);
-    const result = value
-      .slice(0, maxContainerEntries)
-      .map((entry) => project(itemSchema, entry, depth + 1, ancestors, state, maxContainerEntries));
-    if (value.length > maxContainerEntries) {
-      state.complete = false;
-      result.push('[TRUNCATED: more entries]');
-    }
-    ancestors.delete(value);
-    return result;
-  }
-
-  const properties = recordValue(schema?.properties);
-  const result: Record<string, unknown> = Object.create(null);
-  const entries = Object.entries(value).slice(0, maxContainerEntries);
-  for (const [key, entry] of entries) {
-    const propertySchema = ownRecordValue(properties, key);
-    if (SENSITIVE_KEY.test(key) && !isSensitiveSchema(propertySchema)) {
-      state.complete = false;
-      result[key] = '[REDACTED]';
-    } else {
-      result[key] = project(
-        propertySchema,
-        entry,
-        depth + 1,
-        ancestors,
-        state,
-        maxContainerEntries,
-      );
-    }
-  }
-  if (Object.keys(value).length > maxContainerEntries) {
-    state.complete = false;
-    result._truncated = '[TRUNCATED: more properties]';
-  }
-  ancestors.delete(value);
-  return result;
 }
 
 function isSensitiveSchema(schema: JsonSchema | undefined): boolean {

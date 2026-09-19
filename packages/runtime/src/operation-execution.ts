@@ -358,6 +358,9 @@ async function invokeOperation(
               ...(deps.publicAdmission === undefined
                 ? {}
                 : { publicAdmission: deps.publicAdmission }),
+              ...(deps.assistantSessionId === undefined
+                ? {}
+                : { assistantSessionId: deps.assistantSessionId }),
               args: connectorArgs,
               env,
               ...(signal === undefined ? {} : { signal }),

@@ -16,6 +16,7 @@ import { SelfHostAdminGate } from './admin-gate.js';
 import { resolveSelfHostConfig, resolveSelfHostMigrationConfig } from './config.js';
 import { createHttpActionConnectors } from './http-actions.js';
 import { createHttpAdmissionGate } from './http-admission.js';
+import { createHttpSquareConnectors } from './http-square.js';
 import { ownerAuthOptions } from './owner-auth.js';
 
 type SelfHostRunningService = Pick<RunningService, 'close'>;
@@ -83,7 +84,19 @@ export async function startSelfHostService(
   const running = await dependencies.serve({
     ...(config.actions === undefined
       ? {}
-      : { deploymentConnectors: createHttpActionConnectors(config.actions) }),
+      : {
+          deploymentConnectors: (() => {
+            const bridges = [
+              createHttpActionConnectors(config.actions),
+              createHttpSquareConnectors(config.actions),
+            ];
+            return {
+              catalog: bridges.flatMap((bridge) => bridge.catalog),
+              create: (input: Parameters<(typeof bridges)[number]['create']>[0]) =>
+                bridges.flatMap((bridge) => bridge.create(input)),
+            };
+          })(),
+        }),
     host: config.host,
     port: config.port,
     publicBaseUrl: config.publicBaseUrl,

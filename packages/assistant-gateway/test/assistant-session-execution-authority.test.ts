@@ -17,6 +17,7 @@ import {
   type InvocationContext,
 } from '@noodle-borg/runtime';
 import { describe, expect, it } from 'vitest';
+import { executeAssistantAppToolCall } from '../src/app-tool-call.js';
 import {
   assistantPreparedToolContinuation,
   dispatchAssistantTool,
@@ -70,6 +71,34 @@ describe('assistant session execution authority', () => {
     });
     expect(run.calls.map((call) => call.route?.baseUrl)).toEqual([FIRST_ROUTE, SECOND_ROUTE]);
     expect(run.credentialRoutes).toEqual(['customer_api', 'customer_api']);
+    expect(run.calls.map((call) => call.assistantSessionId)).toEqual([
+      session(FIRST_ROUTE).id,
+      session(SECOND_ROUTE).id,
+    ]);
+  });
+
+  it('keeps two sessions for the same owner distinct through widget dispatch and overrides stale deps', async () => {
+    const run = harness();
+    const first = { ...session(FIRST_ROUTE), id: 'first-session' };
+    const second = { ...session(FIRST_ROUTE), id: 'second-session' };
+    for (const current of [first, second]) {
+      const result = await executeAssistantAppToolCall({
+        artifact: run.artifact,
+        deps: { ...run.deps, assistantSessionId: 'stale-session' },
+        session: current,
+        toolName: 'read_customer',
+        arguments: {},
+        now: () => NOW,
+        store: run.store,
+        audit: { emit: async () => {} },
+      });
+      expect(result).toEqual({ kind: 'output', output: {} });
+    }
+    expect(first.caller).toEqual(second.caller);
+    expect(run.calls.map((call) => call.assistantSessionId)).toEqual([
+      'first-session',
+      'second-session',
+    ]);
   });
 
   it('resumes a confirmed action with the route authority stored on its session', async () => {
@@ -98,6 +127,7 @@ describe('assistant session execution authority', () => {
 
     expect(result).toEqual({ status: 'completed', output: {} });
     expect(run.calls.map((call) => call.route?.baseUrl)).toEqual([FIRST_ROUTE]);
+    expect(run.calls[0]?.assistantSessionId).toBe(storedSession.id);
   });
 });
 
