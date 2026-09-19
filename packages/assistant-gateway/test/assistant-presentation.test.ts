@@ -304,6 +304,23 @@ describe('assistant interaction presentation', () => {
     });
   });
 
+  it('distinguishes shared sibling references from cycles and isolates successive projections', () => {
+    const shared = { label: 'Same choice' };
+    const cyclic: Record<string, unknown> = { shared };
+    cyclic.self = cyclic;
+    expect(assistantSafeOutput(undefined, cyclic)).toEqual({
+      shared,
+      self: '[TRUNCATED: cycle]',
+    });
+    expect(assistantArgumentReview({}, cyclic)).toEqual({
+      ok: false,
+      code: 'arguments_not_presentable',
+    });
+    const siblings = { first: shared, second: shared, list: [shared, shared] };
+    expect(assistantArgumentReview({}, siblings)).toMatchObject({ ok: true, value: siblings });
+    expect(assistantSafeOutput(undefined, siblings)).toEqual(siblings);
+  });
+
   it('preserves 500 compact entries within the temporary presentation ceiling', () => {
     const entries = Array.from({ length: 500 }, (_, index) => ({ id: index }));
 

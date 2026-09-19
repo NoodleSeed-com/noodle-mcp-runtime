@@ -123,15 +123,11 @@ export async function runAgentTurn(
     executionBinding ??
     (await resolveAssistantModelBinding(target, session.tenant, session.deploymentId, deps));
   if (!binding) {
-    return emit({
-      event: 'error',
-      data: {
-        code:
-          assistant.model.kind === 'noodle-managed'
-            ? 'managed_model_unavailable'
-            : 'model_not_configured',
-      },
-    });
+    return fail(
+      assistant.model.kind === 'noodle-managed'
+        ? 'managed_model_unavailable'
+        : 'model_not_configured',
+    );
   }
   // Zero means offer none, from every source — not "call one and meet `tool_call_budget_exhausted`".
   // A required tool and a knowledge tool each reach the model by their own path, so silencing only
@@ -178,6 +174,9 @@ export async function runAgentTurn(
     ...session.history,
     { role: 'user', content: message },
   ];
+  const recordToolResult = (call: ModelToolCall, content: string): void => {
+    messages.push({ role: 'tool', tool_call_id: call.id, content });
+  };
   // Across every step of this turn, not per step: eight tool calls is eight, however the model splits
   // them, or a model that loops one call per step would spend the budget a step at a time.
   let toolCallsThisTurn = 0;
@@ -188,14 +187,12 @@ export async function runAgentTurn(
     argumentRecoveries += 1;
     // This runs before dispatch: nothing was executed and no confirmation was created.
     // Keep both the normal model-step and tool-call budgets; never replay a dispatched call.
-    messages.push({
-      role: 'tool',
-      tool_call_id: call.id,
-      content:
-        'The tool was not executed because its arguments do not match its input schema. ' +
+    recordToolResult(
+      call,
+      'The tool was not executed because its arguments do not match its input schema. ' +
         'Correct the JSON arguments using only the fields in the supplied schema, including required wrappers. ' +
         'Do not invent search filters or identifiers. Ask the user if required information is missing.',
-    });
+    );
     return true;
   };
   let remainingTokens = binding.requestPolicy?.maxTokensPerTurn;
@@ -296,15 +293,10 @@ export async function runAgentTurn(
           return fail('invalid_tool_arguments');
         }
         emit({ event: 'tool_started', data: { id: call.id, tool: call.function.name } });
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await executeAssistantKnowledgeSearch(
-            knowledge,
-            knowledgeComponent,
-            knowledgeArgs,
-          ),
-        });
+        recordToolResult(
+          call,
+          await executeAssistantKnowledgeSearch(knowledge, knowledgeComponent, knowledgeArgs),
+        );
         continue;
       }
       const tool = stepModelTools.find((candidate) => candidate.name === call.function.name);
@@ -315,11 +307,7 @@ export async function runAgentTurn(
         if (omittedToolRecoveries > 0) return fail('invalid_model_tool_call');
         omittedToolRecoveries += 1;
         modelTools = [];
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: assistantOmittedToolResult(call.function.name),
-        });
+        recordToolResult(call, assistantOmittedToolResult(call.function.name));
         continue;
       }
       // A mixed surface turns "denied" into "sign in first". The intercept runs BEFORE the
@@ -353,11 +341,7 @@ export async function runAgentTurn(
       if (elevation) {
         stats.interactionCount += 1;
         emit(elevation.event);
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: elevation.modelResult,
-        });
+        recordToolResult(call, elevation.modelResult);
         continue;
       }
       if (!evaluateToolAuthorization(tool.authorization, session.caller).allow)
@@ -420,11 +404,7 @@ export async function runAgentTurn(
         await deps.store.replaceLatestView(session.id, recoverableAssistantView(view));
         emit({ event: 'view_available', data: { ...view } });
       }
-      messages.push({
-        role: 'tool',
-        tool_call_id: call.id,
-        content: JSON.stringify(dispatch.output),
-      });
+      recordToolResult(call, JSON.stringify(dispatch.output));
     }
   }
   fail('step_limit');
@@ -600,17 +580,14 @@ function selectTurnModelTools(
   usedToolNames?: readonly string[],
 ): readonly ArtifactTool[] {
   const assistant = target.served.artifact.server.assistant;
-  if (caller.identityKind === 'anonymous' && offersSignIn(assistant)) {
-    const surface = publicSurfaceOf(assistant);
-    if (surface !== undefined) {
-      return selectAssistantModelTools(target.served.artifact, caller, {
-        anonymousSignInOfferSurface: surface.capabilities,
-        ...(latestMessage === undefined ? {} : { latestMessage }),
-        ...(usedToolNames === undefined ? {} : { usedToolNames }),
-      });
-    }
-  }
+  const signInSurface =
+    caller.identityKind === 'anonymous' && offersSignIn(assistant)
+      ? publicSurfaceOf(assistant)
+      : undefined;
   return selectAssistantModelTools(target.served.artifact, caller, {
+    ...(signInSurface === undefined
+      ? {}
+      : { anonymousSignInOfferSurface: signInSurface.capabilities }),
     ...(latestMessage === undefined ? {} : { latestMessage }),
     ...(usedToolNames === undefined ? {} : { usedToolNames }),
   });

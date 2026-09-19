@@ -255,6 +255,42 @@ describe('embedded assistant product guide', () => {
     ).toBe(true);
   });
 
+  it('pairs mixed successful and rejected calls with their own results without replay', async () => {
+    const { base, basic, modelFetch } = await start();
+    const completion = (...calls: readonly [string, string][]) =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: calls.map(([id, args]) => ({
+                id,
+                type: 'function',
+                function: { name: 'list_cases', arguments: args },
+              })),
+            },
+          },
+        ],
+      });
+    modelFetch
+      .mockResolvedValueOnce(completion(['executed', '{}'], ['rejected', '{broken']))
+      .mockResolvedValueOnce(completion(['corrected', '{}']));
+    const body = await runTurn(base, basic, { roles: ['support_agent'], scopes: ['cases:read'] });
+    expect(body).not.toContain('event: error');
+    expect(body.match(/event: tool_started/g)).toHaveLength(2);
+    expect(modelFetch).toHaveBeenCalledTimes(3);
+    const request = JSON.parse(String(modelFetch.mock.calls[2]?.[1]?.body));
+    const results = request.messages.filter((message: { role: string }) => message.role === 'tool');
+    expect(results.map((message: { tool_call_id: string }) => message.tool_call_id)).toEqual([
+      'executed',
+      'rejected',
+      'corrected',
+    ]);
+    expect(results[0].content).toBe(results[2].content);
+    expect(results[1].content).toContain('not executed');
+  });
+
   it('still requires confirmation when a corrected call is an action', async () => {
     const { base, basic, modelFetch } = await start();
     const call = (args: string) =>
