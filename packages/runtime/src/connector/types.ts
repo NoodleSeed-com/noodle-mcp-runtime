@@ -137,6 +137,8 @@ export interface ConnectorCallHost {
 
 /** A single connector-operation invocation, fully resolved and credentialed by the runtime. */
 export interface ConnectorCall {
+  /** Verified persisted assistant session identity. Private host authority, never expression input. */
+  readonly assistantSessionId?: string;
   readonly operation: string;
   /** Runtime-generated, deployment/step-bound identity. Not a business input or recovery authority. */
   readonly execution?: Readonly<{

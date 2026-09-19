@@ -163,6 +163,7 @@ describe('embedded assistant product guide', () => {
     base: string,
     basic: string,
     identity: { readonly roles: readonly string[]; readonly scopes: readonly string[] },
+    expected = 'Grounded.',
   ) {
     // A signed-in operator lives on the authenticated surface's own origin; the mixed surface's
     // allowlist and instructions belong to the marketing front door (exact binding, ADR 0201).
@@ -188,7 +189,9 @@ describe('embedded assistant product guide', () => {
       body: '{"message":"Help me with a case."}',
     });
     expect(turn.status).toBe(200);
-    expect(await turn.text()).toContain('Grounded.');
+    const body = await turn.text();
+    expect(body).toContain(expected);
+    return body;
   }
 
   async function runAnonymousTurn(base: string, embedId: string) {
@@ -213,6 +216,108 @@ describe('embedded assistant product guide', () => {
     expect(turn.status, turnBody).toBe(200);
     expect(turnBody).toContain('Grounded.');
   }
+
+  it.each([
+    '{"query":"sweet desserts"}',
+    '{broken',
+  ])('repairs invalid arguments before executing a tool: %s', async (invalid) => {
+    const { base, basic, modelFetch } = await start();
+    const call = (args: string) =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'read-call',
+                  type: 'function',
+                  function: { name: 'list_cases', arguments: args },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    modelFetch.mockResolvedValueOnce(call(invalid)).mockResolvedValueOnce(call('{}'));
+    const body = await runTurn(base, basic, { roles: ['support_agent'], scopes: ['cases:read'] });
+    expect(body).not.toContain('event: error');
+    expect(body.match(/event: tool_started/g)).toHaveLength(1);
+    expect(modelFetch).toHaveBeenCalledTimes(3);
+    const correction = JSON.parse(String(modelFetch.mock.calls[1]?.[1]?.body));
+    expect(correction.messages.at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'read-call' });
+    expect(correction.messages.at(-1).content).toContain('not executed');
+    expect(
+      correction.tools.some(
+        (tool: { function: { name: string } }) => tool.function.name === 'list_cases',
+      ),
+    ).toBe(true);
+  });
+
+  it('still requires confirmation when a corrected call is an action', async () => {
+    const { base, basic, modelFetch } = await start();
+    const call = (args: string) =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'action-call',
+                  type: 'function',
+                  function: { name: 'close_case', arguments: args },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    modelFetch
+      .mockResolvedValueOnce(call('{"query":"close it"}'))
+      .mockResolvedValueOnce(call('{"caseId":"42"}'));
+    const body = await runTurn(
+      base,
+      basic,
+      { roles: ['support_admin'], scopes: ['cases:read', 'cases:write'] },
+      'event: tool_proposed',
+    );
+    expect(body).not.toContain('event: tool_started');
+    expect(modelFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops after one argument correction and never executes either invalid call', async () => {
+    const { base, basic, modelFetch } = await start();
+    modelFetch.mockImplementation(async () =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'bad-call',
+                  type: 'function',
+                  function: { name: 'list_cases', arguments: '{"query":"desserts"}' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const body = await runTurn(
+      base,
+      basic,
+      { roles: ['support_agent'], scopes: ['cases:read'] },
+      'invalid_tool_arguments',
+    );
+    expect(body).not.toContain('event: tool_started');
+    expect(modelFetch).toHaveBeenCalledTimes(2);
+  });
 
   it('adds only complete, surface- and authorization-filtered workflows for each caller', async () => {
     const { base, basic, embed, modelFetch } = await start();

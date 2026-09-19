@@ -94,11 +94,12 @@ describe('assistant customer routing', () => {
 
 function assistantSession(customerRouting: Readonly<Record<string, string>>): Omit<
   AssistantSessionRecord,
-  'id' | 'tokenHash' | 'history'
+  'tokenHash' | 'history'
 > & {
   readonly customerRouting: Readonly<Record<string, string>>;
 } {
   return {
+    id: 'session-one',
     clientId: 'embed_123',
     tenant: { org: 'acme', app: 'support', env: 'prod' },
     deploymentId: 'dep_123',

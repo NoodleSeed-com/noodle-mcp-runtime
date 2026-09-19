@@ -3,7 +3,9 @@ import { isCredentialShapedAssistantText } from './assistant-sensitive-values.js
 
 const MAX_REVIEW_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024;
+// Reviews stay shallow and exact; catalog output needs room for nested options and money.
 const MAX_DEPTH = 8;
+const MAX_OUTPUT_DEPTH = 12;
 const MAX_REVIEW_CONTAINER_ENTRIES = 128;
 const MAX_OUTPUT_CONTAINER_ENTRIES = 512;
 const MAX_STRING_LENGTH = 2_048;
@@ -131,7 +133,16 @@ function boundedProjection(
   const maxBytes = label === 'REVIEW' ? MAX_REVIEW_BYTES : MAX_OUTPUT_BYTES;
   const maxContainerEntries =
     label === 'REVIEW' ? MAX_REVIEW_CONTAINER_ENTRIES : MAX_OUTPUT_CONTAINER_ENTRIES;
-  const projected = project(schema, value, 0, new Set<object>(), state, maxContainerEntries);
+  const maxDepth = label === 'REVIEW' ? MAX_DEPTH : MAX_OUTPUT_DEPTH;
+  const projected = project(
+    schema,
+    value,
+    0,
+    new Set<object>(),
+    state,
+    maxContainerEntries,
+    maxDepth,
+  );
   try {
     const encoded = JSON.stringify(projected);
     if (new TextEncoder().encode(encoded).byteLength <= maxBytes) {
@@ -205,6 +216,7 @@ function project(
   ancestors: Set<object>,
   state: { complete: boolean },
   maxContainerEntries: number,
+  maxDepth: number,
 ): unknown {
   if (isSensitiveSchema(schema)) return '[REDACTED]';
   if (typeof value === 'string') {
@@ -222,7 +234,7 @@ function project(
     state.complete = false;
     return '[UNPRESENTABLE]';
   }
-  if (depth >= MAX_DEPTH) {
+  if (depth >= maxDepth) {
     state.complete = false;
     return '[TRUNCATED: maximum depth]';
   }
@@ -236,7 +248,9 @@ function project(
     const itemSchema = recordValue(schema?.items);
     const result = value
       .slice(0, maxContainerEntries)
-      .map((entry) => project(itemSchema, entry, depth + 1, ancestors, state, maxContainerEntries));
+      .map((entry) =>
+        project(itemSchema, entry, depth + 1, ancestors, state, maxContainerEntries, maxDepth),
+      );
     if (value.length > maxContainerEntries) {
       state.complete = false;
       result.push('[TRUNCATED: more entries]');
@@ -261,6 +275,7 @@ function project(
         ancestors,
         state,
         maxContainerEntries,
+        maxDepth,
       );
     }
   }

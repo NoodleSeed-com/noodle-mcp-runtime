@@ -42,13 +42,15 @@ export function parseAssistantCustomerRouting(
 export function withAssistantSessionExecutionAuthority<T extends ExecuteDeps>(
   deps: T,
   artifact: Pick<RuntimeArtifact, 'customerEndpoints'>,
-  session: Pick<AssistantSessionRecord, 'clientId' | 'customerRouting'>,
+  session: Pick<AssistantSessionRecord, 'id' | 'clientId' | 'customerRouting'>,
 ): T & {
+  readonly assistantSessionId: string;
   readonly customerIssuer: string;
   readonly customerRoutes?: ReturnType<typeof freezeCustomerRoutes>;
 } {
   return {
     ...deps,
+    assistantSessionId: session.id,
     customerIssuer: assistantCustomerIssuer(session.clientId),
     ...(artifact.customerEndpoints === undefined
       ? {}

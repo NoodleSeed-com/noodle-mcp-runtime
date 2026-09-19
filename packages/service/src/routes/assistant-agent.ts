@@ -182,6 +182,22 @@ export async function runAgentTurn(
   // them, or a model that loops one call per step would spend the budget a step at a time.
   let toolCallsThisTurn = 0;
   let omittedToolRecoveries = 0;
+  let argumentRecoveries = 0;
+  const repairArguments = (call: ModelToolCall): boolean => {
+    if (argumentRecoveries > 0) return false;
+    argumentRecoveries += 1;
+    // This runs before dispatch: nothing was executed and no confirmation was created.
+    // Keep both the normal model-step and tool-call budgets; never replay a dispatched call.
+    messages.push({
+      role: 'tool',
+      tool_call_id: call.id,
+      content:
+        'The tool was not executed because its arguments do not match its input schema. ' +
+        'Correct the JSON arguments using only the fields in the supplied schema, including required wrappers. ' +
+        'Do not invent search filters or identifiers. Ask the user if required information is missing.',
+    });
+    return true;
+  };
   let remainingTokens = binding.requestPolicy?.maxTokensPerTurn;
   const turnSignal =
     binding.requestPolicy?.maxTurnMs === undefined
@@ -350,12 +366,16 @@ export async function runAgentTurn(
       try {
         args = JSON.parse(call.function.arguments);
       } catch {
-        return fail('invalid_tool_arguments');
+        if (!repairArguments(call)) return fail('invalid_tool_arguments');
+        continue;
       }
       // Validate AND apply schema defaults; the pending record and the execution below both use
       // the coerced copy, so the confirmed call equals the executed call (roadmap S5).
       const coerced = validateJsonSchemaWithDefaults(tool.inputSchema, args);
-      if (coerced.issues.length > 0) return fail('invalid_tool_arguments');
+      if (coerced.issues.length > 0) {
+        if (!repairArguments(call)) return fail('invalid_tool_arguments');
+        continue;
+      }
       args = coerced.value;
       const dispatch = await dispatchAssistantTool({
         artifact: target.served.artifact,
